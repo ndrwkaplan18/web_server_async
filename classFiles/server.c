@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 #define VERSION 25
 #define BUFSIZE 8096
 #define ERROR      42
@@ -30,16 +31,93 @@ struct {
 	{"tar", "image/tar" },  
 	{"htm", "text/html" },  
 	{"html","text/html" },  
-	{0,0} };
+	{0,0} }; // extensions[5].filetype
 
 static const char * HDRS_FORBIDDEN = "HTTP/1.1 403 Forbidden\nContent-Length: 185\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>403 Forbidden</title>\n</head><body>\n<h1>Forbidden</h1>\nThe requested URL, file type or operation is not allowed on this simple static file webserver.\n</body></html>\n";
 static const char * HDRS_NOTFOUND = "HTTP/1.1 404 Not Found\nContent-Length: 136\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\nThe requested URL was not found on this server.\n</body></html>\n";
 static const char * HDRS_OK = "HTTP/1.1 200 OK\nServer: nweb/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n";
 static int dummy; //keep compiler happy
 
+/* what a worker thread needs to start a job */
+typedef struct {   
+	int job_id;
+	int job_fd; // the socket file descriptor   
+	// what other stuff needs to be here eventually?
+} job_t;
+
+typedef struct {   
+	job_t * jobBuffer; // array of server Jobs on heap   
+	size_t buf_capacity;   
+	size_t head; // position of writer   
+	size_t tail; // position of reader   
+	pthread_mutex_t work_mutex;    
+	pthread_cond_t c_cond; // P/C condition variables    
+	pthread_cond_t p_cond;
+} tpool_t;
+
+static tpool_t the_pool; // one pool to rule them all 
+
+// define type for worker thread C function
+typedef void * (worker_fn) (void *);
+
+void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker)
+{    
+	pthread_t  thread;    
+	size_t	i;
+
+	pthread_mutex_init(&(tm->work_mutex), NULL);    
+	pthread_cond_init(&(tm->p_cond), NULL);    
+	pthread_cond_init(&(tm->c_cond), NULL);
+
+	// initialize buffer to empty condition    
+	tm->head = tm->tail = 0;    
+	tm->buf_capacity = buf_size;    
+	//... CALLOC_ACTUAL_BUFFER_SPACE_ON_HEAP
+
+    for (i=0; i<num_threads; i++) {        
+		pthread_create(&thread, NULL, worker, (void *) i + 1);        
+		pthread_detach(thread); // make non-joinable    
+	}
+}
+
+static void *tpool_worker(void *arg){
+	tpool_t *tm = &the_pool;    
+	int my_id = (int) arg;
+
+	while (1) {
+		job_t *job;
+		pthread_mutex_lock(&(tm->work_mutex));
+		while (THERE_IS_NO_WORK_TO_BE_DONE)            
+			pthread_cond_wait(&(tm->c_cond), &(tm->work_mutex));
+		job = REMOVE_JOB_FROM_BUFFER(tm);
+		pthread_mutex_unlock(&(tm->work_mutex));
+		DO_THE_WORK(job);  // call web() plus ??
+		pthread_mutex_lock(&(tm->work_mutex));
+		if (SHOULD_WAKE_UP_THE_PRODUCER);
+			pthread_cond_signal(&(tm->p_cond));
+		pthread_mutex_unlock(&(tm->work_mutex));
+	}
+	return NULL;
+}
+
+char tpool_add_work(tpool_t *tm, job_t job){
+	pthread_mutex_lock(&(tm->work_mutex));
+	while (THE_BUFFER_IS_FULL)        
+		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
+	ADD_JOB_TO_BUFFER(tm, job);
+	// Wake the Keystone Cops!! (improve this eventually)    
+	pthread_cond_broadcast(&(tm->c_cond));
+	pthread_mutex_unlock(&(tm->work_mutex));
+
+	return 1;
+}
+
+/*
+Based on what the client supplies, Logger will either return one of several Error-type messages, or open and write to "nweb.log".
+*/
 void logger(int type, char *s1, char *s2, int socket_fd)
 {
-	int fd ;
+	int fd;
 	char logbuffer[BUFSIZE*2];
 
 	switch (type) {
@@ -88,7 +166,7 @@ void web(int fd, int hit)
         }
     }
     logger(LOG,"request",buffer,hit);
-    if( strncmp(buffer,"GET ",4) && strncmp(buffer,"get ",4) ) {
+    if( strncmp(buffer,"GET ",4) && strncmp(buffer,"get ",4)) { //!!וביה מניה סתירה !והא
         logger(FORBIDDEN,"Only simple GET operation supported",buffer,fd);
         goto endRequest;
     }
@@ -98,6 +176,8 @@ void web(int fd, int hit)
             break;
         }
     }
+	// Now i = BUFSIZE - 1
+	// URL: https://www.tutorialspoint.com/../../../c_standard_library/c_function_strncmp.htm
     for(j=0;j<i-1;j++) {    /* check for illegal parent directory use .. */
         if(buffer[j] == '.' && buffer[j+1] == '.') {
             logger(FORBIDDEN,"Parent directory (..) path names not supported",buffer,fd);
@@ -120,7 +200,7 @@ void web(int fd, int hit)
     }
     if(fstr == 0){
         logger(FORBIDDEN,"file extension type not supported",buffer,fd);
-    }
+    } // GET /zoobat.jpg
     if(( file_fd = open(&buffer[5],O_RDONLY)) == -1) {  /* open the file for reading */
         logger(NOTFOUND, "failed to open file",&buffer[5],fd);
         goto endRequest;
@@ -201,6 +281,7 @@ int main(int argc, char **argv)
 		if((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length)) < 0) {
 			logger(ERROR,"system call","accept",0);
 		}
+		//
 		web(socketfd,hit); /* this is where the action happens */
 	}
 }
