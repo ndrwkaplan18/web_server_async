@@ -16,7 +16,9 @@
 #define LOG        44
 #define FORBIDDEN 403
 #define NOTFOUND  404
-
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*TYPEDEF, STRUCT, AND GLOBAL DECLARATIONS */
 struct {
 	char *ext;
 	char *filetype;
@@ -60,43 +62,50 @@ typedef struct {
 typedef void * (worker_fn) (void *);
 
 static tpool_t the_pool; // one pool to rule them all
-
-/******************************************************************/
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
 /* FUNCTION DECLARATIONS */
-
 // Thread pool functions
 void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker);
-// static void *tpool_worker(void *arg);
-static void *tpool_worker();
-char tpool_add_work(tpool_t *tm, job_t job);
+static void *tpool_worker(void *arg);
+// static void *tpool_worker();
+char tpool_add_work(job_t job);
 
 // Thread pool helper functions
-job_t REMOVE_JOB_FROM_BUFFER(tpool_t *thread_pool);
-void ADD_JOB_TO_BUFFER(tpool_t *thread_pool, job_t job);
+job_t REMOVE_JOB_FROM_BUFFER();
+void ADD_JOB_TO_BUFFER(job_t job);
 void DO_THE_WORK(job_t *job);
 
 // The work
 void logger(int type, char *s1, char *s2, int socket_fd);
 void web(int fd, int hit);
-/******************************************************************/
-
-job_t REMOVE_JOB_FROM_BUFFER(tpool_t *thread_pool){
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*HELPER FUNCTIONS */
+job_t REMOVE_JOB_FROM_BUFFER(){
 	// Return job currently pointed to by tail ptr, then decrement tail ptr
-	return thread_pool->jobBuffer[--thread_pool->tail];
+	tpool_t *tm = &the_pool;
+	job_t job = tm->jobBuffer[tm->tail];
+	tm->tail--;
+	return job;
 }
 
-void ADD_JOB_TO_BUFFER(tpool_t *thread_pool, job_t job){
+void ADD_JOB_TO_BUFFER(job_t job){
 	// Increment head ptr then add job to that index in buffer
-	thread_pool->jobBuffer[thread_pool->head++] = job;
+	tpool_t *tm = &the_pool;
+	tm->head++;
+	tm->jobBuffer[tm->head] = job;
 }
 
 void DO_THE_WORK(job_t *job){
 	web(job->job_fd, job->job_id);
 }
-
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*THREAD POOL FUNCTIONS */
 void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker)
 {
-	pthread_t  thread;
+	pthread_t *thread;
 	size_t	i;
 
 	pthread_mutex_init(&(tm->work_mutex), NULL);
@@ -108,18 +117,18 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	tm->buf_capacity = buf_size;
 	tm->jobBuffer = (job_t*) calloc(buf_size, sizeof(job_t));
 	//... CALLOC_ACTUAL_BUFFER_SPACE_ON_HEAP
-
+	thread = malloc(sizeof(pthread_t)*num_threads);
     for (i=0; i<num_threads; i++) {
-		pthread_create(&thread, NULL, worker, (void *) (i + 1));
-		pthread_detach(thread); // make non-joinable
+		pthread_create(&thread[i], NULL, worker, (void *) (i + 1));
+		pthread_detach(*thread); // make non-joinable
 	}
 }
 
 
-// static void *tpool_worker(void *arg)
-static void *tpool_worker(){
+static void *tpool_worker(void *arg){
+// static void *tpool_worker(){
 	tpool_t *tm = &the_pool;
-	// int my_id = (intptr_t) arg; // Just casting to (int) triggers warning: "cast to pointer from integer of different size"
+	int my_id = (intptr_t) arg; // Just casting to (int) triggers warning: "cast to pointer from integer of different size"
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
 
 	while (1) {
@@ -138,18 +147,21 @@ static void *tpool_worker(){
 	return NULL;
 }
 
-char tpool_add_work(tpool_t *tm, job_t job){
+char tpool_add_work(job_t job){
+	tpool_t *tm = &the_pool;
 	pthread_mutex_lock(&(tm->work_mutex));
 	while (THE_BUFFER_IS_FULL)
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
-	ADD_JOB_TO_BUFFER(tm, job);
+	ADD_JOB_TO_BUFFER(job);
 	// Wake the Keystone Cops!! (improve this eventually)
 	pthread_cond_broadcast(&(tm->c_cond));
 	pthread_mutex_unlock(&(tm->work_mutex));
 
 	return 1;
 }
-
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*SERVER FUNCTIONS */
 /*
 Based on what the client supplies, Logger will either return one of several Error-type messages, or open and write to "nweb.log".
 */
@@ -260,15 +272,17 @@ void web(int fd, int hit)
     sleep(1);   /* allow socket to drain before signalling the socket is closed */
     close(fd);
 }
-
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*MAIN */
 int main(int argc, char **argv)
 {
 	int i, port, listenfd, socketfd, hit;
 	socklen_t length;
 	static struct sockaddr_in cli_addr; /* static = initialised to zeros */
 	static struct sockaddr_in serv_addr; /* static = initialised to zeros */
-	tpool_t *tm;
-	worker_fn *worker;
+	worker_fn *worker = *tpool_worker;
+	tpool_t *tm = &the_pool;
 	job_t job;
 
 	if( argc < 5  || argc > 5 || !strcmp(argv[1], "-?") ) {
@@ -317,9 +331,9 @@ int main(int argc, char **argv)
 	if( listen(listenfd,64) <0) {
 		logger(ERROR,"system call","listen",0);
 	}
-
+	// printf("port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
 	// Set up thread pool
-	tpool_init(tm, (intptr_t) argv[3], (intptr_t) argv[4], *worker);
+	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker);
 
 	for(hit=1; ;hit++) {
 		length = sizeof(cli_addr);
@@ -328,7 +342,7 @@ int main(int argc, char **argv)
 		}
 		job.job_fd = socketfd;
 		job.job_id = hit;
-		tpool_add_work(tm, job);
-		tpool_worker();
+		tpool_add_work(job);
+		// tpool_worker();
 	}
 }
