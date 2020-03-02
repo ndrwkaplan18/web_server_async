@@ -16,102 +16,163 @@
 #define LOG        44
 #define FORBIDDEN 403
 #define NOTFOUND  404
-
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*TYPEDEF, STRUCT, AND GLOBAL DECLARATIONS */
 struct {
 	char *ext;
 	char *filetype;
 } extensions [] = {
-	{"gif", "image/gif" },  
-	{"jpg", "image/jpg" }, 
+	{"gif", "image/gif" },
+	{"jpg", "image/jpg" },
 	{"jpeg","image/jpeg"},
-	{"png", "image/png" },  
-	{"ico", "image/ico" },  
-	{"zip", "image/zip" },  
-	{"gz",  "image/gz"  },  
-	{"tar", "image/tar" },  
-	{"htm", "text/html" },  
-	{"html","text/html" },  
+	{"png", "image/png" },
+	{"ico", "image/ico" },
+	{"zip", "image/zip" },
+	{"gz",  "image/gz"  },
+	{"tar", "image/tar" },
+	{"htm", "text/html" },
+	{"html","text/html" },
 	{0,0} }; // extensions[5].filetype
 
 static const char * HDRS_FORBIDDEN = "HTTP/1.1 403 Forbidden\nContent-Length: 185\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>403 Forbidden</title>\n</head><body>\n<h1>Forbidden</h1>\nThe requested URL, file type or operation is not allowed on this simple static file webserver.\n</body></html>\n";
 static const char * HDRS_NOTFOUND = "HTTP/1.1 404 Not Found\nContent-Length: 136\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\nThe requested URL was not found on this server.\n</body></html>\n";
 static const char * HDRS_OK = "HTTP/1.1 200 OK\nServer: nweb/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n";
 static int dummy; //keep compiler happy
+static char THERE_IS_NO_WORK_TO_BE_DONE, SHOULD_WAKE_UP_THE_PRODUCER, THE_BUFFER_IS_FULL; // TODO
 
 /* what a worker thread needs to start a job */
-typedef struct {   
+typedef struct {
 	int job_id;
-	int job_fd; // the socket file descriptor   
+	int job_fd; // the socket file descriptor
 	// what other stuff needs to be here eventually?
 } job_t;
 
-typedef struct {   
-	job_t * jobBuffer; // array of server Jobs on heap   
-	size_t buf_capacity;   
-	size_t head; // position of writer   
-	size_t tail; // position of reader   
-	pthread_mutex_t work_mutex;    
-	pthread_cond_t c_cond; // P/C condition variables    
+typedef struct {
+	job_t * jobBuffer; // array of server Jobs on heap
+	size_t buf_capacity;
+	size_t head; // position of writer
+	size_t tail; // position of reader
+	pthread_mutex_t work_mutex;
+	pthread_cond_t c_cond; // P/C condition variables
 	pthread_cond_t p_cond;
 } tpool_t;
-
-static tpool_t the_pool; // one pool to rule them all 
 
 // define type for worker thread C function
 typedef void * (worker_fn) (void *);
 
-void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker)
-{    
-	pthread_t  thread;    
-	size_t	i;
+static tpool_t the_pool; // one pool to rule them all
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/* FUNCTION DECLARATIONS */
+// Thread pool functions
+void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker);
+static void *tpool_worker(void *arg);
+char tpool_add_work(job_t job);
 
-	pthread_mutex_init(&(tm->work_mutex), NULL);    
-	pthread_cond_init(&(tm->p_cond), NULL);    
+// Thread pool helper functions
+job_t REMOVE_JOB_FROM_BUFFER();
+void ADD_JOB_TO_BUFFER(job_t job);
+void DO_THE_WORK(job_t *job);
+
+// The work
+void logger(int type, char *s1, char *s2, int socket_fd);
+void web(int fd, int hit);
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*HELPER FUNCTIONS */
+job_t REMOVE_JOB_FROM_BUFFER(){
+	// Return job currently pointed to by tail ptr, then decrement tail ptr
+	tpool_t *tm = &the_pool;
+	job_t job = tm->jobBuffer[tm->tail];
+	tm->tail--;
+	// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
+	return job;
+}
+
+void ADD_JOB_TO_BUFFER(job_t job){
+	// Increment head ptr then add job to that index in buffer
+	// Test
+	tpool_t *tm = &the_pool;
+	tm->head++;
+	tm->jobBuffer[tm->head] = job;
+}
+
+void DO_THE_WORK(job_t *job){
+	web(job->job_fd, job->job_id);
+}
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*THREAD POOL FUNCTIONS */
+void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker)
+{
+	pthread_t* threads = (pthread_t*) malloc(sizeof(pthread_t));
+	size_t	i;
+	int status;
+
+	pthread_mutex_init(&(tm->work_mutex), NULL);
+	pthread_cond_init(&(tm->p_cond), NULL);
 	pthread_cond_init(&(tm->c_cond), NULL);
 
-	// initialize buffer to empty condition    
-	tm->head = tm->tail = 0;    
-	tm->buf_capacity = buf_size;    
+	// initialize buffer to empty condition
+	tm->head = tm->tail = 0;
+	tm->buf_capacity = buf_size;
+	tm->jobBuffer = (job_t*) calloc(buf_size, sizeof(job_t));
+	THERE_IS_NO_WORK_TO_BE_DONE = 1;
+	THE_BUFFER_IS_FULL = 0;
+	SHOULD_WAKE_UP_THE_PRODUCER = 0;
 	//... CALLOC_ACTUAL_BUFFER_SPACE_ON_HEAP
-
-    for (i=0; i<num_threads; i++) {        
-		pthread_create(&thread, NULL, worker, (void *) i + 1);        
-		pthread_detach(thread); // make non-joinable    
+	// *threads = (pthread_t*) calloc(num_threads, sizeof(pthread_t));
+    for (i=0; i<num_threads; i++) {
+		printf("Making thread %d\n",(int) i+1);
+		if((status = pthread_create(&threads[i], NULL, *worker, (void *) (i + 1))) == 0){
+			pthread_detach(threads[i]); // make non-joinable
+			printf("Thread %d successfully detached\n", (int) i+1);
+		}
+		else
+			printf("Oops, pthread_create() returned error code %d when attempting to make thread %d\n",status, (int) i);
 	}
 }
 
-static void *tpool_worker(void *arg){
-	tpool_t *tm = &the_pool;    
-	int my_id = (int) arg;
 
+static void *tpool_worker(void *arg){
+	tpool_t *tm = &the_pool;
+	int my_id = (intptr_t) arg; // Just casting to (int) triggers warning: "cast to pointer from integer of different size"
+	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
+	printf("Hello from thread %d!\n",my_id);
 	while (1) {
-		job_t *job;
+		job_t *job = (job_t*) malloc(sizeof(job_t));
 		pthread_mutex_lock(&(tm->work_mutex));
-		while (THERE_IS_NO_WORK_TO_BE_DONE)            
+		while (THERE_IS_NO_WORK_TO_BE_DONE){
+			// pthread_cond_signal(&tm->p_cond);
 			pthread_cond_wait(&(tm->c_cond), &(tm->work_mutex));
-		job = REMOVE_JOB_FROM_BUFFER(tm);
+		}
+		*job = REMOVE_JOB_FROM_BUFFER(tm);
 		pthread_mutex_unlock(&(tm->work_mutex));
 		DO_THE_WORK(job);  // call web() plus ??
 		pthread_mutex_lock(&(tm->work_mutex));
-		if (SHOULD_WAKE_UP_THE_PRODUCER);
+		if (SHOULD_WAKE_UP_THE_PRODUCER)
 			pthread_cond_signal(&(tm->p_cond));
 		pthread_mutex_unlock(&(tm->work_mutex));
 	}
 	return NULL;
 }
 
-char tpool_add_work(tpool_t *tm, job_t job){
+char tpool_add_work(job_t job){
+	tpool_t *tm = &the_pool;
 	pthread_mutex_lock(&(tm->work_mutex));
-	while (THE_BUFFER_IS_FULL)        
+	while (THE_BUFFER_IS_FULL)
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
-	ADD_JOB_TO_BUFFER(tm, job);
-	// Wake the Keystone Cops!! (improve this eventually)    
+	ADD_JOB_TO_BUFFER(job);
+	// Wake the Keystone Cops!! (improve this eventually)
 	pthread_cond_broadcast(&(tm->c_cond));
 	pthread_mutex_unlock(&(tm->work_mutex));
 
 	return 1;
 }
-
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*SERVER FUNCTIONS */
 /*
 Based on what the client supplies, Logger will either return one of several Error-type messages, or open and write to "nweb.log".
 */
@@ -121,22 +182,22 @@ void logger(int type, char *s1, char *s2, int socket_fd)
 	char logbuffer[BUFSIZE*2];
 
 	switch (type) {
-	case ERROR: (void)sprintf(logbuffer,"ERROR: %s:%s Errno=%d exiting pid=%d",s1, s2, errno,getpid()); 
+	case ERROR: (void)sprintf(logbuffer,"ERROR: %s:%s Errno=%d exiting pid=%d",s1, s2, errno,getpid());
 		break;
-	case FORBIDDEN: 
+	case FORBIDDEN:
 		dummy = write(socket_fd, HDRS_FORBIDDEN,271);
-		(void)sprintf(logbuffer,"FORBIDDEN: %s:%s",s1, s2); 
+		(void)sprintf(logbuffer,"FORBIDDEN: %s:%s",s1, s2);
 		break;
-	case NOTFOUND: 
+	case NOTFOUND:
 		dummy = write(socket_fd, HDRS_NOTFOUND,224);
-		(void)sprintf(logbuffer,"NOT FOUND: %s:%s",s1, s2); 
+		(void)sprintf(logbuffer,"NOT FOUND: %s:%s",s1, s2);
 		break;
 	case LOG: (void)sprintf(logbuffer," INFO: %s:%s:%d",s1, s2,socket_fd); break;
-	}	
+	}
 	/* No checks here, nothing can be done with a failure anyway */
 	if((fd = open("nweb.log", O_CREAT| O_WRONLY | O_APPEND,0644)) >= 0) {
-		dummy = write(fd,logbuffer,strlen(logbuffer)); 
-		dummy = write(fd,"\n",1);      
+		dummy = write(fd,logbuffer,strlen(logbuffer));
+		dummy = write(fd,"\n",1);
 		(void)close(fd);
 	}
 }
@@ -158,7 +219,7 @@ void web(int fd, int hit)
         buffer[ret]=0;      /* terminate the buffer */
     }
     else {
-        buffer[0]=0; 
+        buffer[0]=0;
     }
     for(i=0;i<ret;i++) {    /* remove CF and LF characters */
         if(buffer[i] == '\r' || buffer[i] == '\n') {
@@ -209,11 +270,11 @@ void web(int fd, int hit)
     len = (long)lseek(file_fd, (off_t)0, SEEK_END); /* lseek to the file end to find the length */
           (void)lseek(file_fd, (off_t)0, SEEK_SET); /* lseek back to the file start ready for reading */
           /* print out the response line, stock headers, and a blank line at the end. */
-          (void)sprintf(buffer, HDRS_OK, VERSION, len, fstr); 
+          (void)sprintf(buffer, HDRS_OK, VERSION, len, fstr);
     logger(LOG,"Header",buffer,hit);
     dummy = write(fd,buffer,strlen(buffer));
-    
-  
+
+
     /* send file in 8KB block - last block may be smaller */
     while ( (ret = read(file_fd, buffer, BUFSIZE)) > 0 ) {
         dummy = write(fd,buffer,ret);
@@ -222,15 +283,20 @@ void web(int fd, int hit)
     sleep(1);   /* allow socket to drain before signalling the socket is closed */
     close(fd);
 }
-
+/************************************************************************************************************************************/
+/************************************************************************************************************************************/
+/*MAIN */
 int main(int argc, char **argv)
 {
 	int i, port, listenfd, socketfd, hit;
 	socklen_t length;
 	static struct sockaddr_in cli_addr; /* static = initialised to zeros */
 	static struct sockaddr_in serv_addr; /* static = initialised to zeros */
+	worker_fn *worker = tpool_worker;
+	tpool_t *tm = &the_pool;
+	job_t job;
 
-	if( argc < 3  || argc > 3 || !strcmp(argv[1], "-?") ) {
+	if( argc < 5  || argc > 5 || !strcmp(argv[1], "-?") ) {
 		(void)printf("USAGE: %s <port-number> <top-directory>\t\tversion %d\n\n"
 	"\tnweb is a small and very safe mini web server\n"
 	"\tnweb only servers out file/web pages with extensions named below\n"
@@ -253,11 +319,11 @@ int main(int argc, char **argv)
 		(void)printf("ERROR: Bad top directory %s, see nweb -?\n",argv[2]);
 		exit(3);
 	}
-	if(chdir(argv[2]) == -1){ 
+	if(chdir(argv[2]) == -1){
 		(void)printf("ERROR: Can't Change to directory %s\n",argv[2]);
 		exit(4);
 	}
-	
+
 	logger(LOG,"nweb starting",argv[1],getpid());
 	/* setup the network socket */
 	if((listenfd = socket(AF_INET, SOCK_STREAM,0)) <0){
@@ -276,12 +342,18 @@ int main(int argc, char **argv)
 	if( listen(listenfd,64) <0) {
 		logger(ERROR,"system call","listen",0);
 	}
+	// printf("port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
+	// Set up thread pool
+	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker);
+
 	for(hit=1; ;hit++) {
 		length = sizeof(cli_addr);
 		if((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length)) < 0) {
 			logger(ERROR,"system call","accept",0);
 		}
-		//
-		web(socketfd,hit); /* this is where the action happens */
+		job.job_fd = socketfd;
+		job.job_id = hit;
+		tpool_add_work(job);
+		// tpool_worker();
 	}
 }
