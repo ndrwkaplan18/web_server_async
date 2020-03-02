@@ -68,7 +68,6 @@ static tpool_t the_pool; // one pool to rule them all
 // Thread pool functions
 void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker);
 static void *tpool_worker(void *arg);
-// static void *tpool_worker();
 char tpool_add_work(job_t job);
 
 // Thread pool helper functions
@@ -87,11 +86,13 @@ job_t REMOVE_JOB_FROM_BUFFER(){
 	tpool_t *tm = &the_pool;
 	job_t job = tm->jobBuffer[tm->tail];
 	tm->tail--;
+	// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
 	return job;
 }
 
 void ADD_JOB_TO_BUFFER(job_t job){
 	// Increment head ptr then add job to that index in buffer
+	// Test
 	tpool_t *tm = &the_pool;
 	tm->head++;
 	tm->jobBuffer[tm->head] = job;
@@ -105,8 +106,9 @@ void DO_THE_WORK(job_t *job){
 /*THREAD POOL FUNCTIONS */
 void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker)
 {
-	pthread_t *thread;
+	pthread_t* threads = (pthread_t*) malloc(sizeof(pthread_t));
 	size_t	i;
+	int status;
 
 	pthread_mutex_init(&(tm->work_mutex), NULL);
 	pthread_cond_init(&(tm->p_cond), NULL);
@@ -116,26 +118,35 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	tm->head = tm->tail = 0;
 	tm->buf_capacity = buf_size;
 	tm->jobBuffer = (job_t*) calloc(buf_size, sizeof(job_t));
+	THERE_IS_NO_WORK_TO_BE_DONE = 1;
+	THE_BUFFER_IS_FULL = 0;
+	SHOULD_WAKE_UP_THE_PRODUCER = 0;
 	//... CALLOC_ACTUAL_BUFFER_SPACE_ON_HEAP
-	thread = malloc(sizeof(pthread_t)*num_threads);
+	// *threads = (pthread_t*) calloc(num_threads, sizeof(pthread_t));
     for (i=0; i<num_threads; i++) {
-		pthread_create(&thread[i], NULL, worker, (void *) (i + 1));
-		pthread_detach(*thread); // make non-joinable
+		printf("Making thread %d\n",(int) i+1);
+		if((status = pthread_create(&threads[i], NULL, *worker, (void *) (i + 1))) == 0){
+			pthread_detach(threads[i]); // make non-joinable
+			printf("Thread %d successfully detached\n", (int) i+1);
+		}
+		else
+			printf("Oops, pthread_create() returned error code %d when attempting to make thread %d\n",status, (int) i);
 	}
 }
 
 
 static void *tpool_worker(void *arg){
-// static void *tpool_worker(){
 	tpool_t *tm = &the_pool;
 	int my_id = (intptr_t) arg; // Just casting to (int) triggers warning: "cast to pointer from integer of different size"
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
-
+	printf("Hello from thread %d!\n",my_id);
 	while (1) {
 		job_t *job;
 		pthread_mutex_lock(&(tm->work_mutex));
-		while (THERE_IS_NO_WORK_TO_BE_DONE)
+		while (THERE_IS_NO_WORK_TO_BE_DONE){
+			// pthread_cond_signal(&tm->p_cond);
 			pthread_cond_wait(&(tm->c_cond), &(tm->work_mutex));
+		}
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
 		pthread_mutex_unlock(&(tm->work_mutex));
 		DO_THE_WORK(job);  // call web() plus ??
@@ -281,7 +292,7 @@ int main(int argc, char **argv)
 	socklen_t length;
 	static struct sockaddr_in cli_addr; /* static = initialised to zeros */
 	static struct sockaddr_in serv_addr; /* static = initialised to zeros */
-	worker_fn *worker = *tpool_worker;
+	worker_fn *worker = tpool_worker;
 	tpool_t *tm = &the_pool;
 	job_t job;
 
