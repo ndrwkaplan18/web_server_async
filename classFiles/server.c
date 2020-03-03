@@ -85,17 +85,28 @@ job_t REMOVE_JOB_FROM_BUFFER(){
 	// Return job currently pointed to by tail ptr, then decrement tail ptr
 	tpool_t *tm = &the_pool;
 	job_t job = tm->jobBuffer[tm->tail];
-	tm->tail--;
+	tm->tail = (tm->tail + 1) % tm->buf_capacity;
+	// printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d.\ntail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
 	// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
+	if(tm->tail == tm->head){
+		THERE_IS_NO_WORK_TO_BE_DONE = 1;
+		SHOULD_WAKE_UP_THE_PRODUCER = 1;
+	}
+	THE_BUFFER_IS_FULL = 0;
 	return job;
 }
 
 void ADD_JOB_TO_BUFFER(job_t job){
 	// Increment head ptr then add job to that index in buffer
-	// Test
 	tpool_t *tm = &the_pool;
-	tm->head++;
 	tm->jobBuffer[tm->head] = job;
+	tm->head = (tm->head + 1) % tm->buf_capacity;
+	THERE_IS_NO_WORK_TO_BE_DONE = 0;
+	SHOULD_WAKE_UP_THE_PRODUCER = 0;
+	if((tm->head + 1 % tm->buf_capacity) == tm->tail)
+		THE_BUFFER_IS_FULL = 1;
+	// printf("In ADD_JOB_TO_BUFFER. Adding job %d.\nhead was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
+	
 }
 
 void DO_THE_WORK(job_t *job){
@@ -127,7 +138,7 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 		printf("Making thread %d\n",(int) i+1);
 		if((status = pthread_create(&threads[i], NULL, *worker, (void *) (i + 1))) == 0){
 			pthread_detach(threads[i]); // make non-joinable
-			printf("Thread %d successfully detached\n", (int) i+1);
+			// printf("Thread %d successfully detached\n", (int) i+1);
 		}
 		else
 			printf("Oops, pthread_create() returned error code %d when attempting to make thread %d\n",status, (int) i);
@@ -139,7 +150,7 @@ static void *tpool_worker(void *arg){
 	tpool_t *tm = &the_pool;
 	int my_id = (intptr_t) arg; // Just casting to (int) triggers warning: "cast to pointer from integer of different size"
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
-	printf("Hello from thread %d!\n",my_id);
+	
 	while (1) {
 		job_t *job = (job_t*) malloc(sizeof(job_t));
 		pthread_mutex_lock(&(tm->work_mutex));
@@ -148,6 +159,7 @@ static void *tpool_worker(void *arg){
 			pthread_cond_wait(&(tm->c_cond), &(tm->work_mutex));
 		}
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
+		printf("Hello from thread %d!\nDoing job %d now.",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
 		DO_THE_WORK(job);  // call web() plus ??
 		pthread_mutex_lock(&(tm->work_mutex));
@@ -165,6 +177,7 @@ char tpool_add_work(job_t job){
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
 	ADD_JOB_TO_BUFFER(job);
 	// Wake the Keystone Cops!! (improve this eventually)
+	printf("Broadcasting to consumer\n");
 	pthread_cond_broadcast(&(tm->c_cond));
 	pthread_mutex_unlock(&(tm->work_mutex));
 
