@@ -150,7 +150,7 @@ static void *tpool_worker(void *arg){
 	tpool_t *tm = &the_pool;
 	int my_id = (intptr_t) arg; // Just casting to (int) triggers warning: "cast to pointer from integer of different size"
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
-	
+	printf("Hello from thread %d!\n",my_id);
 	while (1) {
 		job_t *job = (job_t*) malloc(sizeof(job_t));
 		pthread_mutex_lock(&(tm->work_mutex));
