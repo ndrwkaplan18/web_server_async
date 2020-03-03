@@ -135,7 +135,7 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	//... CALLOC_ACTUAL_BUFFER_SPACE_ON_HEAP
 	// *threads = (pthread_t*) calloc(num_threads, sizeof(pthread_t));
     for (i=0; i<num_threads; i++) {
-		printf("Making thread %d\n",(int) i+1);
+		// printf("Making thread %d\n",(int) i+1);
 		if((status = pthread_create(&threads[i], NULL, *worker, (void *) (i + 1))) == 0){
 			pthread_detach(threads[i]); // make non-joinable
 			// printf("Thread %d successfully detached\n", (int) i+1);
@@ -159,7 +159,7 @@ static void *tpool_worker(void *arg){
 			pthread_cond_wait(&(tm->c_cond), &(tm->work_mutex));
 		}
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
-		printf("Hello from thread %d!\nDoing job %d now.",my_id, (int) job->job_id);
+		// printf("Hello from thread %d!\nDoing job %d now.",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
 		DO_THE_WORK(job);  // call web() plus ??
 		pthread_mutex_lock(&(tm->work_mutex));
@@ -177,7 +177,7 @@ char tpool_add_work(job_t job){
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
 	ADD_JOB_TO_BUFFER(job);
 	// Wake the Keystone Cops!! (improve this eventually)
-	printf("Broadcasting to consumer\n");
+	// printf("Broadcasting to consumer\n");
 	pthread_cond_broadcast(&(tm->c_cond));
 	pthread_mutex_unlock(&(tm->work_mutex));
 
