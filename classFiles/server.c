@@ -141,7 +141,7 @@ static void *tpool_worker(void *arg){
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
 	printf("Hello from thread %d!\n",my_id);
 	while (1) {
-		job_t *job;
+		job_t *job = (job_t*) malloc(sizeof(job_t));
 		pthread_mutex_lock(&(tm->work_mutex));
 		while (THERE_IS_NO_WORK_TO_BE_DONE){
 			// pthread_cond_signal(&tm->p_cond);
