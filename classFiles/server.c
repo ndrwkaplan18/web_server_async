@@ -85,17 +85,20 @@ job_t REMOVE_JOB_FROM_BUFFER(){
 	// Return job currently pointed to by tail ptr, then decrement tail ptr
 	tpool_t *tm = &the_pool;
 	job_t job = tm->jobBuffer[tm->tail];
-	tm->tail--;
+	tm->tail = (tm->tail + 1) % tm->buf_capacity;
+	printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d.\ntail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
 	// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
 	return job;
 }
 
 void ADD_JOB_TO_BUFFER(job_t job){
 	// Increment head ptr then add job to that index in buffer
-	// Test
 	tpool_t *tm = &the_pool;
-	tm->head++;
 	tm->jobBuffer[tm->head] = job;
+	tm->head = (tm->head + 1) % tm->buf_capacity;
+	THERE_IS_NO_WORK_TO_BE_DONE = 0;
+	printf("In ADD_JOB_TO_BUFFER. Adding job %d.\nhead was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
+	
 }
 
 void DO_THE_WORK(job_t *job){
@@ -165,6 +168,7 @@ char tpool_add_work(job_t job){
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
 	ADD_JOB_TO_BUFFER(job);
 	// Wake the Keystone Cops!! (improve this eventually)
+	printf("Broadcasting to consumer\n");
 	pthread_cond_broadcast(&(tm->c_cond));
 	pthread_mutex_unlock(&(tm->work_mutex));
 
