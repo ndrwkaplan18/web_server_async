@@ -33,18 +33,19 @@ struct {
 	{"tar", "image/tar" },
 	{"htm", "text/html" },
 	{"html","text/html" },
-	{0,0} }; // extensions[5].filetype
+	{0,0} }; // extensions[5].filetype//come back to
 
 static const char * HDRS_FORBIDDEN = "HTTP/1.1 403 Forbidden\nContent-Length: 185\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>403 Forbidden</title>\n</head><body>\n<h1>Forbidden</h1>\nThe requested URL, file type or operation is not allowed on this simple static file webserver.\n</body></html>\n";
 static const char * HDRS_NOTFOUND = "HTTP/1.1 404 Not Found\nContent-Length: 136\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\nThe requested URL was not found on this server.\n</body></html>\n";
 static const char * HDRS_OK = "HTTP/1.1 200 OK\nServer: nweb/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n";
 static int dummy; //keep compiler happy
-static char THERE_IS_NO_WORK_TO_BE_DONE, SHOULD_WAKE_UP_THE_PRODUCER, THE_BUFFER_IS_FULL; // TODO
+static char THERE_IS_NO_WORK_TO_BE_DONE, SHOULD_WAKE_UP_THE_PRODUCER, THE_BUFFER_IS_FULL;  
 
 /* what a worker thread needs to start a job */
 typedef struct {
 	int job_id;
 	int job_fd; // the socket file descriptor
+	char[] type;//extension?
 	// what other stuff needs to be here eventually?
 } job_t;
 
@@ -56,8 +57,12 @@ typedef struct {
 	pthread_mutex_t work_mutex;
 	pthread_cond_t c_cond; // P/C condition variables
 	pthread_cond_t p_cond;
+	char[] schedalg;
 } tpool_t;
-
+/*typedef struct{
+	char* argument;
+}schedalg[]={{ANY},{FIFO},{HPIC},{HPHC},{0}};
+*/
 // define type for worker thread C function
 typedef void * (worker_fn) (void *);
 
@@ -97,7 +102,7 @@ job_t REMOVE_JOB_FROM_BUFFER(){
 }
 
 void ADD_JOB_TO_BUFFER(job_t job){
-	// Increment head ptr then add job to that index in buffer
+	// add job to that index and increment the pointer.
 	tpool_t *tm = &the_pool;
 	tm->jobBuffer[tm->head] = job;
 	tm->head = (tm->head + 1) % tm->buf_capacity;
@@ -110,6 +115,29 @@ void ADD_JOB_TO_BUFFER(job_t job){
 }
 
 void DO_THE_WORK(job_t *job){
+	/*
+	THis logic goes elsewhere. ie. before a func calls Do_the_work
+	if(!strncmp(tm->schedalg, HPIC){
+		for(int i =0; i< buffer; i ++){
+			if(!strncmp(buffer[i], Any of the jpeg things...){
+				job = buffer[i];
+				break;
+			}
+		}
+		//if it goes throught the whole buffer and is unsuccesful in finding an image file... 
+		job = nextJob; it just takes any and sends it through.
+	}
+	if(!strncmp(tm->schedalg, HPHC){
+		for(int i =0; i< buffer; i ++){
+			if(!strncmp(buffer[i], Any of the HTML things...){
+				job = buffer[i];
+				break;
+			}
+		}
+		//if it goes throught the whole buffer and is unsuccesful in finding an image file... 
+		job = nextJob; it just takes any image and sends it through.
+	}
+	*/
 	web(job->job_fd, job->job_id);
 }
 /************************************************************************************************************************************/
@@ -152,7 +180,7 @@ static void *tpool_worker(void *arg){
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
 	printf("Hello from thread %d!\n",my_id);
 	while (1) {
-		job_t *job = (job_t*) malloc(sizeof(job_t));
+		job_t *job = (job_t*) malloc(sizeof(job_t));//creates an array of Jobs
 		pthread_mutex_lock(&(tm->work_mutex));
 		while (THERE_IS_NO_WORK_TO_BE_DONE){
 			// pthread_cond_signal(&tm->p_cond);
@@ -161,6 +189,29 @@ static void *tpool_worker(void *arg){
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
 		// printf("Hello from thread %d!\nDoing job %d now.",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
+		/*
+	THis logic goes elsewhere. ie. before a func calls Do_the_work
+	if(!strncmp(tm->schedalg, HPIC){
+		for(int i =0; i< buffer; i ++){
+			if(!strncmp(buffer[i], Any of the jpeg things...){
+				job = buffer[i];
+				break;
+			}
+		}
+		//if it goes throught the whole buffer and is unsuccesful in finding an image file... 
+		job = nextJob; it just takes any and sends it through.
+	}
+	if(!strncmp(tm->schedalg, HPHC){
+		for(int i =0; i< buffer; i ++){
+			if(!strncmp(buffer[i], Any of the HTML things...){
+				job = buffer[i];
+				break;
+			}
+		}
+		//if it goes throught the whole buffer and is unsuccesful in finding an image file... 
+		job = nextJob; it just takes any image and sends it through.
+	}
+	*/
 		DO_THE_WORK(job);  // call web() plus ??
 		pthread_mutex_lock(&(tm->work_mutex));
 		if (SHOULD_WAKE_UP_THE_PRODUCER)
@@ -308,6 +359,17 @@ int main(int argc, char **argv)
 	worker_fn *worker = tpool_worker;
 	tpool_t *tm = &the_pool;
 	job_t job;
+	
+	if(argv[4]==HPIC ){
+		tm->schedalg = HPIC;
+	}
+	if(argv[4]==HPHC){
+		tm->schedalg = HPHC;
+	}
+	else{
+		tm->schedalg = FIFO;
+	}
+	
 
 	if( argc < 5  || argc > 5 || !strcmp(argv[1], "-?") ) {
 		(void)printf("USAGE: %s <port-number> <top-directory>\t\tversion %d\n\n"
