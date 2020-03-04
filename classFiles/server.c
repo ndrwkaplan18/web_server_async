@@ -360,7 +360,7 @@ int main(int argc, char **argv)
 	tpool_t *tm = &the_pool;
 	job_t job;
 	
-	if(argv[4]==HPIC ){
+	/*if(argv[4]==HPIC ){
 		tm->schedalg = HPIC;
 	}
 	if(argv[4]==HPHC){
@@ -368,7 +368,7 @@ int main(int argc, char **argv)
 	}
 	else{
 		tm->schedalg = FIFO;
-	}
+	}*/
 	
 
 	if( argc < 5  || argc > 5 || !strcmp(argv[1], "-?") ) {
