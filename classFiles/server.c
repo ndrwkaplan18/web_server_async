@@ -46,6 +46,7 @@ typedef struct {
 	int job_id;
 	int job_fd; // the socket file descriptor
 	char[] type;//extension?
+	//extensions[]* ext;?
 	// what other stuff needs to be here eventually?
 } job_t;
 
@@ -57,12 +58,11 @@ typedef struct {
 	pthread_mutex_t work_mutex;
 	pthread_cond_t c_cond; // P/C condition variables
 	pthread_cond_t p_cond;
-	char[] schedalg;
+	//char[] schedalg;
+	
 } tpool_t;
-/*typedef struct{
-	char* argument;
-}schedalg[]={{ANY},{FIFO},{HPIC},{HPHC},{0}};
-*/
+
+
 // define type for worker thread C function
 typedef void * (worker_fn) (void *);
 
@@ -115,29 +115,6 @@ void ADD_JOB_TO_BUFFER(job_t job){
 }
 
 void DO_THE_WORK(job_t *job){
-	/*
-	THis logic goes elsewhere. ie. before a func calls Do_the_work
-	if(!strncmp(tm->schedalg, HPIC){
-		for(int i =0; i< buffer; i ++){
-			if(!strncmp(buffer[i], Any of the jpeg things...){
-				job = buffer[i];
-				break;
-			}
-		}
-		//if it goes throught the whole buffer and is unsuccesful in finding an image file... 
-		job = nextJob; it just takes any and sends it through.
-	}
-	if(!strncmp(tm->schedalg, HPHC){
-		for(int i =0; i< buffer; i ++){
-			if(!strncmp(buffer[i], Any of the HTML things...){
-				job = buffer[i];
-				break;
-			}
-		}
-		//if it goes throught the whole buffer and is unsuccesful in finding an image file... 
-		job = nextJob; it just takes any image and sends it through.
-	}
-	*/
 	web(job->job_fd, job->job_id);
 }
 /************************************************************************************************************************************/
@@ -191,10 +168,10 @@ static void *tpool_worker(void *arg){
 		pthread_mutex_unlock(&(tm->work_mutex));
 		/*
 	THis logic goes elsewhere. ie. before a func calls Do_the_work
-	if(!strncmp(tm->schedalg, HPIC){
-		for(int i =0; i< buffer; i ++){
-			if(!strncmp(buffer[i], Any of the jpeg things...){
-				job = buffer[i];
+	if(!strncmp(tm->schedalg, "HPIC"){
+		for(int i =0; i< tm->buffer; i ++){
+			if(!strncmp(tm->buffer[i]->extension, Any of the jpeg things...){
+				job = tm->buffer[i];
 				break;
 			}
 		}
@@ -202,9 +179,9 @@ static void *tpool_worker(void *arg){
 		job = nextJob; it just takes any and sends it through.
 	}
 	if(!strncmp(tm->schedalg, HPHC){
-		for(int i =0; i< buffer; i ++){
-			if(!strncmp(buffer[i], Any of the HTML things...){
-				job = buffer[i];
+		for(int i =0; i< tm->buffer; i ++){
+			if(!strncmp(tm->buffer[i]->extension, Any of the HTML things...){
+				job = tm->buffer[i];
 				break;
 			}
 		}
@@ -360,14 +337,21 @@ int main(int argc, char **argv)
 	tpool_t *tm = &the_pool;
 	job_t job;
 	
-	/*if(argv[4]==HPIC ){
-		tm->schedalg = HPIC;
+	/*if(argv[4]== "HPIC" ){
+		tm->schedalg = "HPIC";
 	}
-	if(argv[4]==HPHC){
-		tm->schedalg = HPHC;
+
+	if else(argv[4]=="HPHC"){
+		tm->schedalg = "HPHC";
+	}
+	if else(argv[4]=="ANY"){
+		tm->schedalg = "FIFO";
+	}
+	if else(argv[4]=="FIFO"){
+		tm->schedalg = "FIFO";
 	}
 	else{
-		tm->schedalg = FIFO;
+		system.err("Must Provide ORder type");
 	}*/
 	
 
