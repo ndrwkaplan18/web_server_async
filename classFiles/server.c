@@ -44,9 +44,8 @@ static char THERE_IS_NO_WORK_TO_BE_DONE, SHOULD_WAKE_UP_THE_PRODUCER, THE_BUFFER
 /* what a worker thread needs to start a job */
 typedef struct {
 	int job_id;
-	int job_fd; // the socket file descriptor
-	char[] type;//extension?
-	//extensions[]* ext;?
+	int job_fd; // the socket file descriptor// 1 for pic, 0 for Text.
+	int taken;//tells the producer whether or not this job was taken or not. 
 	// what other stuff needs to be here eventually?
 } job_t;
 
@@ -58,7 +57,7 @@ typedef struct {
 	pthread_mutex_t work_mutex;
 	pthread_cond_t c_cond; // P/C condition variables
 	pthread_cond_t p_cond;
-	//char[] schedalg;
+	char* schedalg;
 	
 } tpool_t;
 
@@ -71,25 +70,106 @@ static tpool_t the_pool; // one pool to rule them all
 /************************************************************************************************************************************/
 /* FUNCTION DECLARATIONS */
 // Thread pool functions
-void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker);
+void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker,char* schedalg);
 static void *tpool_worker(void *arg);
 char tpool_add_work(job_t job);
 
 // Thread pool helper functions
 job_t REMOVE_JOB_FROM_BUFFER();
+job_t REMOVE_PIC_JOB_FROM_BUFFER();
+job_t REMOVE_TXT_JOB_FROM_BUFFER();
 void ADD_JOB_TO_BUFFER(job_t job);
 void DO_THE_WORK(job_t *job);
-
+int getFileExtension(int fd, int id);
 // The work
 void logger(int type, char *s1, char *s2, int socket_fd);
 void web(int fd, int hit);
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
 /*HELPER FUNCTIONS */
+int getFileExtension(int fd, int id){//returns 1 for images and 0 for Text
+	int j, buflen;
+    long i, ret, len;
+    char * ext;
+    static char buffer[BUFSIZE+1]; /* static so zero filled */
+
+    ret =read(fd,buffer,BUFSIZE);   /* read Web request in one go */
+    if(ret == 0 || ret == -1) { /* read failure stop now */
+        goto endRequest;
+    }
+    if(ret > 0 && ret < BUFSIZE) {  /* return code is valid chars */
+        buffer[ret]=0;      /* terminate the buffer */
+    }
+    else {
+        buffer[0]=0;
+    }
+    for(i=0;i<ret;i++) {    /* remove CF and LF characters */
+        if(buffer[i] == '\r' || buffer[i] == '\n') {
+            buffer[i]='*';
+        }
+    }
+    if( strncmp(buffer,"GET ",4) && strncmp(buffer,"get ",4)) { //!!וביה מניה סתירה !והא
+        goto endRequest;
+    }
+    for(i=4;i<BUFSIZE;i++) { /* null terminate after the second space to ignore extra stuff */
+        if(buffer[i] == ' ') { /* string is "GET URL " +lots of other stuff */
+            buffer[i] = 0;
+            break;
+        }
+    }
+	// Now i = BUFSIZE - 1
+	// URL: https://www.tutorialspoint.com/../../../c_standard_library/c_function_strncmp.htm
+    for(j=0;j<i-1;j++) {    /* check for illegal parent directory use .. */
+        if(buffer[j] == '.' && buffer[j+1] == '.') {
+            goto endRequest;
+        }
+    }
+    if( !strncmp(&buffer[0],"GET /\0",6) || !strncmp(&buffer[0],"get /\0",6) ) { /* convert no filename to index file */
+        (void)strcpy(buffer,"GET /index.html");
+    }
+
+    /* work out the file type and check we support it */
+    buflen=strlen(buffer);
+    ext = (char *)0;
+	int identifierDigit;
+    for(i=0;extensions[i].ext != 0;i++) {
+        len = strlen(extensions[i].ext);
+        if( !strncmp(&buffer[buflen-len], extensions[i].ext, len)) {
+            ext = extensions[i].ext;
+            break;
+        }
+    }
+	for (int j=0;j<=6; j++){
+		if(!strcmp(ext,extensions[i].ext)){
+			identifierDigit = 1;
+		}
+		else{
+			identifierDigit = 0;
+		}
+	}
+     // GET /zoobat.jpg
+    endRequest:
+    sleep(1);   /* allow socket to drain before signalling the socket is closed */
+    close(fd);
+return identifierDigit;
+}
+
 job_t REMOVE_JOB_FROM_BUFFER(){
 	// Return job currently pointed to by tail ptr, then decrement tail ptr
+	
 	tpool_t *tm = &the_pool;
-	job_t job = tm->jobBuffer[tm->tail];
+	job_t job;
+	
+	if(!strcmp(tm->schedalg, "HPIC")){ 
+		job =  REMOVE_PIC_JOB_FROM_BUFFER(tm);
+		return job;
+	}
+	if(!strcmp(tm->schedalg, "HPHC")){
+		 job = REMOVE_TXT_JOB_FROM_BUFFER(tm);	
+	return job;
+}
+	
+	job = tm->jobBuffer[tm->tail];
 	tm->tail = (tm->tail + 1) % tm->buf_capacity;
 	// printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d.\ntail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
 	// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
@@ -100,7 +180,80 @@ job_t REMOVE_JOB_FROM_BUFFER(){
 	THE_BUFFER_IS_FULL = 0;
 	return job;
 }
-
+job_t REMOVE_PIC_JOB_FROM_BUFFER(){
+	job_t job;
+	int picFiles=0;//Keeps track if therea re any pics in the buffer
+	int fileCounter = 0;
+	tpool_t *tm = &the_pool;
+	for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
+			int type = getFileExtension(tm->jobBuffer[i].job_fd,tm->jobBuffer[i].job_id);
+			if((type == 1)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE pics Files.
+				//STILL HAVE TO FIGURE OUT HOW TO SET THE TAGS!!!!
+				tm->jobBuffer[i].taken = 1;
+				job = tm->jobBuffer[i];//Return the pic
+				picFiles++;
+			}
+	}
+	for(int i =0; i< tm->buf_capacity; i++){
+		if(tm->jobBuffer[i].taken == 0){//its an available text or pic doc
+				fileCounter++;//we know there are other files inside
+		}
+	}
+	/*Checks if theres any work Left*/
+	if(fileCounter == 0){
+		THERE_IS_NO_WORK_TO_BE_DONE = 1;
+		SHOULD_WAKE_UP_THE_PRODUCER = 1;
+	}
+	if(picFiles==0){//there are no pics, so we just do a normal remove
+		job = tm->jobBuffer[tm->tail];
+		tm->tail = (tm->tail + 1) % tm->buf_capacity;
+		// printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d.\ntail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
+		// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
+		if(tm->tail == tm->head){
+			THERE_IS_NO_WORK_TO_BE_DONE = 1;
+			SHOULD_WAKE_UP_THE_PRODUCER = 1;
+		}
+	}
+	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
+	return job;//whichever one it is
+}
+job_t REMOVE_TXT_JOB_FROM_BUFFER(){
+	job_t job;
+	int textFiles=0;//Keeps track if therea re any pics in the buffer
+	int fileCounter = 0;
+	tpool_t *tm = &the_pool;
+	for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
+			int type = getFileExtension(tm->jobBuffer[i].job_fd,tm->jobBuffer[i].job_id);
+			if((type == 0)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE text Files.
+				//STILL HAVE TO FIGURE OUT HOW TO SET THE TAGS!!!!
+				tm->jobBuffer[i].taken = 1;
+				job = tm->jobBuffer[i];//Return the text file
+				textFiles++;//keeps track of text files so we know whether or not to switvh to FIFO
+			}
+	}
+	for(int i =0; i< tm->buf_capacity; i++){
+		if(tm->jobBuffer[i].taken == 0){//its an available text or pic doc
+				fileCounter++;//we know there are other files inside
+		}
+	}
+	/*Checks if theres any work Left*/
+	if(fileCounter == 0){
+		THERE_IS_NO_WORK_TO_BE_DONE = 1;
+		SHOULD_WAKE_UP_THE_PRODUCER = 1;
+	}
+	if(textFiles == 0){//there are no text files, so we just do a normal remove
+		job = tm->jobBuffer[tm->tail];
+		tm->tail = (tm->tail + 1) % tm->buf_capacity;
+		// printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d.\ntail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
+		// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
+		if(tm->tail == tm->head){
+			THERE_IS_NO_WORK_TO_BE_DONE = 1;
+			SHOULD_WAKE_UP_THE_PRODUCER = 1;
+		}
+	}
+	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
+	return job;//whichever one it is
+}
 void ADD_JOB_TO_BUFFER(job_t job){
 	// add job to that index and increment the pointer.
 	tpool_t *tm = &the_pool;
@@ -115,13 +268,33 @@ void ADD_JOB_TO_BUFFER(job_t job){
 }
 
 void DO_THE_WORK(job_t *job){
+	printf("Doing JOB %d",job->job_id);
 	web(job->job_fd, job->job_id);
 }
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
 /*THREAD POOL FUNCTIONS */
-void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker)
+void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker, char* schedalg)
 {
+	//todo Switch staement
+	switch(schedalg){
+		case "HPIC":
+			tm->schedalg = "HPIC";
+			break;
+		case "HPHC":
+			tm->schedalg = "HPHC";
+			break;
+		case ANY:
+			tm->schedalg = "FIFO";
+			break;
+		case FIFO:
+			tm->schedalg = "FIFO";
+			break;
+		default:
+				tm->schedalg = "FIFO";
+		break;
+	}
+	
 	pthread_t* threads = (pthread_t*) malloc(sizeof(pthread_t));
 	size_t	i;
 	int status;
@@ -164,31 +337,9 @@ static void *tpool_worker(void *arg){
 			pthread_cond_wait(&(tm->c_cond), &(tm->work_mutex));
 		}
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
+		printf("This is Job... %d",job->job_id);
 		// printf("Hello from thread %d!\nDoing job %d now.",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
-		/*
-	THis logic goes elsewhere. ie. before a func calls Do_the_work
-	if(!strncmp(tm->schedalg, "HPIC"){
-		for(int i =0; i< tm->buffer; i ++){
-			if(!strncmp(tm->buffer[i]->extension, Any of the jpeg things...){
-				job = tm->buffer[i];
-				break;
-			}
-		}
-		//if it goes throught the whole buffer and is unsuccesful in finding an image file... 
-		job = nextJob; it just takes any and sends it through.
-	}
-	if(!strncmp(tm->schedalg, HPHC){
-		for(int i =0; i< tm->buffer; i ++){
-			if(!strncmp(tm->buffer[i]->extension, Any of the HTML things...){
-				job = tm->buffer[i];
-				break;
-			}
-		}
-		//if it goes throught the whole buffer and is unsuccesful in finding an image file... 
-		job = nextJob; it just takes any image and sends it through.
-	}
-	*/
 		DO_THE_WORK(job);  // call web() plus ??
 		pthread_mutex_lock(&(tm->work_mutex));
 		if (SHOULD_WAKE_UP_THE_PRODUCER)
@@ -296,7 +447,7 @@ void web(int fd, int hit)
     for(i=0;extensions[i].ext != 0;i++) {
         len = strlen(extensions[i].ext);
         if( !strncmp(&buffer[buflen-len], extensions[i].ext, len)) {
-            fstr =extensions[i].filetype;
+            fstr = extensions[i].filetype;
             break;
         }
     }
@@ -314,8 +465,7 @@ void web(int fd, int hit)
           (void)sprintf(buffer, HDRS_OK, VERSION, len, fstr);
     logger(LOG,"Header",buffer,hit);
     dummy = write(fd,buffer,strlen(buffer));
-
-
+	
     /* send file in 8KB block - last block may be smaller */
     while ( (ret = read(file_fd, buffer, BUFSIZE)) > 0 ) {
         dummy = write(fd,buffer,ret);
@@ -336,24 +486,6 @@ int main(int argc, char **argv)
 	worker_fn *worker = tpool_worker;
 	tpool_t *tm = &the_pool;
 	job_t job;
-	
-	/*if(argv[4]== "HPIC" ){
-		tm->schedalg = "HPIC";
-	}
-
-	if else(argv[4]=="HPHC"){
-		tm->schedalg = "HPHC";
-	}
-	if else(argv[4]=="ANY"){
-		tm->schedalg = "FIFO";
-	}
-	if else(argv[4]=="FIFO"){
-		tm->schedalg = "FIFO";
-	}
-	else{
-		system.err("Must Provide ORder type");
-	}*/
-	
 
 	if( argc < 5  || argc > 5 || !strcmp(argv[1], "-?") ) {
 		(void)printf("USAGE: %s <port-number> <top-directory>\t\tversion %d\n\n"
@@ -382,7 +514,6 @@ int main(int argc, char **argv)
 		(void)printf("ERROR: Can't Change to directory %s\n",argv[2]);
 		exit(4);
 	}
-
 	logger(LOG,"nweb starting",argv[1],getpid());
 	/* setup the network socket */
 	if((listenfd = socket(AF_INET, SOCK_STREAM,0)) <0){
@@ -403,8 +534,9 @@ int main(int argc, char **argv)
 	}
 	// printf("port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
 	// Set up thread pool
-	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker);
-
+	char* schedalg = argv[4];
+	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker, schedalg);
+	
 	for(hit=1; ;hit++) {
 		length = sizeof(cli_addr);
 		if((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length)) < 0) {
@@ -416,3 +548,15 @@ int main(int argc, char **argv)
 		// tpool_worker();
 	}
 }
+/* Step one: Main makes a pool, a job and the worker.
+* 	Step two: Main adds Job to the Pool BUffer
+* Step three: There are going to be jobs coming through from client- go to worker
+* step four: Worker takes it out of Buffer in the directed order
+* 			A. FiFO- JUST Takes it out.
+			B. Other two: we have to go through the buffer and rreturn the job with the correct ext.
+				How to find the ext?
+					RemoveJob(s) call getEXT() and suppy the job info. we open the file, get the ext, and return an
+					int pertaining to the extension. 1 for pic, 0 for Txt.
+
+
+Step 5: Does the job, and logger and etcettera.*/
