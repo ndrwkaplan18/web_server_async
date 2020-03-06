@@ -276,24 +276,6 @@ void DO_THE_WORK(job_t *job){
 /*THREAD POOL FUNCTIONS */
 void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker, char* schedalg)
 {
-	//todo Switch staement
-	switch(schedalg){
-		case "HPIC":
-			tm->schedalg = "HPIC";
-			break;
-		case "HPHC":
-			tm->schedalg = "HPHC";
-			break;
-		case ANY:
-			tm->schedalg = "FIFO";
-			break;
-		case FIFO:
-			tm->schedalg = "FIFO";
-			break;
-		default:
-				tm->schedalg = "FIFO";
-		break;
-	}
 	
 	pthread_t* threads = (pthread_t*) malloc(sizeof(pthread_t));
 	size_t	i;
@@ -304,6 +286,22 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	pthread_cond_init(&(tm->c_cond), NULL);
 
 	// initialize buffer to empty condition
+	if (!strcmp(schedalg,"HPIC")){
+		tm->schedalg = "HPIC";
+	}
+	if(!strcmp(schedalg,"HPHC")){
+			tm->schedalg = "HPHC";
+	}
+	if(!strcmp(schedalg,"ANY")){
+			tm->schedalg = "FIFO";
+	}
+	if(!strcmp(schedalg,"FIFO")){
+			tm->schedalg = "FIFO";
+	}
+	else{
+			tm->schedalg = "FIFO";
+	}
+	
 	tm->head = tm->tail = 0;
 	tm->buf_capacity = buf_size;
 	tm->jobBuffer = (job_t*) calloc(buf_size, sizeof(job_t));
@@ -557,6 +555,6 @@ int main(int argc, char **argv)
 				How to find the ext?
 					RemoveJob(s) call getEXT() and suppy the job info. we open the file, get the ext, and return an
 					int pertaining to the extension. 1 for pic, 0 for Txt.
-
+k
 
 Step 5: Does the job, and logger and etcettera.*/
