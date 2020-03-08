@@ -46,6 +46,7 @@ typedef struct {
 	int job_id;
 	int job_fd; // the socket file descriptor// 1 for pic, 0 for Text.
 	int taken;//tells the producer whether or not this job was taken or not. 
+	int type;
 	// what other stuff needs to be here eventually?
 } job_t;
 
@@ -76,6 +77,7 @@ char tpool_add_work(job_t job);
 
 // Thread pool helper functions
 job_t REMOVE_JOB_FROM_BUFFER();
+job_t REMOVE_FIFO_JOB_FROM_BUFFER();
 job_t REMOVE_PIC_JOB_FROM_BUFFER();
 job_t REMOVE_TXT_JOB_FROM_BUFFER();
 void ADD_JOB_TO_BUFFER(job_t job);
@@ -153,25 +155,32 @@ int getFileExtension(int fd, int id){//returns 1 for images and 0 for Text
     close(fd);
 return identifierDigit;
 }
-
 job_t REMOVE_JOB_FROM_BUFFER(){
-	// Return job currently pointed to by tail ptr, then decrement tail ptr
-	
 	tpool_t *tm = &the_pool;
 	job_t job;
 	
 	if(!strcmp(tm->schedalg, "HPIC")){ 
 		job =  REMOVE_PIC_JOB_FROM_BUFFER(tm);
-		return job;
+	return job;
 	}
 	if(!strcmp(tm->schedalg, "HPHC")){
 		 job = REMOVE_TXT_JOB_FROM_BUFFER(tm);	
 	return job;
+	}
+	else{
+		job = REMOVE_FIFO_JOB_FROM_BUFFER(tm);	
+	return job;
+	}
 }
+
+job_t REMOVE_FIFO_JOB_FROM_BUFFER(){
+	// Return job currently pointed to by tail ptr, then decrement tail ptr
 	
+	tpool_t *tm = &the_pool;
+	job_t job;
 	job = tm->jobBuffer[tm->tail];
 	tm->tail = (tm->tail + 1) % tm->buf_capacity;
-	// printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d.\ntail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
+	printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d.\ntail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
 	// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
 	if(tm->tail == tm->head){
 		THERE_IS_NO_WORK_TO_BE_DONE = 1;
@@ -186,12 +195,12 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 	int fileCounter = 0;
 	tpool_t *tm = &the_pool;
 	for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
-			int type = getFileExtension(tm->jobBuffer[i].job_fd,tm->jobBuffer[i].job_id);
-			if((type == 1)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE pics Files.
+			
+			if((job.type == 1)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE pics Files.
 				//STILL HAVE TO FIGURE OUT HOW TO SET THE TAGS!!!!
 				tm->jobBuffer[i].taken = 1;
 				job = tm->jobBuffer[i];//Return the pic
-				picFiles++;
+				picFiles++;//keeps track if there is any-we know whether or not to just switch to FIFO
 			}
 	}
 	for(int i =0; i< tm->buf_capacity; i++){
@@ -205,14 +214,7 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 		SHOULD_WAKE_UP_THE_PRODUCER = 1;
 	}
 	if(picFiles==0){//there are no pics, so we just do a normal remove
-		job = tm->jobBuffer[tm->tail];
-		tm->tail = (tm->tail + 1) % tm->buf_capacity;
-		// printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d.\ntail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
-		// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
-		if(tm->tail == tm->head){
-			THERE_IS_NO_WORK_TO_BE_DONE = 1;
-			SHOULD_WAKE_UP_THE_PRODUCER = 1;
-		}
+		job = REMOVE_FIFO_JOB_FROM_BUFFER();
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
@@ -223,8 +225,8 @@ job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 	int fileCounter = 0;
 	tpool_t *tm = &the_pool;
 	for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
-			int type = getFileExtension(tm->jobBuffer[i].job_fd,tm->jobBuffer[i].job_id);
-			if((type == 0)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE text Files.
+			
+			if((job.type == 0)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE text Files.
 				//STILL HAVE TO FIGURE OUT HOW TO SET THE TAGS!!!!
 				tm->jobBuffer[i].taken = 1;
 				job = tm->jobBuffer[i];//Return the text file
@@ -242,14 +244,7 @@ job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 		SHOULD_WAKE_UP_THE_PRODUCER = 1;
 	}
 	if(textFiles == 0){//there are no text files, so we just do a normal remove
-		job = tm->jobBuffer[tm->tail];
-		tm->tail = (tm->tail + 1) % tm->buf_capacity;
-		// printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d.\ntail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
-		// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
-		if(tm->tail == tm->head){
-			THERE_IS_NO_WORK_TO_BE_DONE = 1;
-			SHOULD_WAKE_UP_THE_PRODUCER = 1;
-		}
+		job = REMOVE_FIFO_JOB_FROM_BUFFER();
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
@@ -263,7 +258,7 @@ void ADD_JOB_TO_BUFFER(job_t job){
 	SHOULD_WAKE_UP_THE_PRODUCER = 0;
 	if((tm->head + 1 % tm->buf_capacity) == tm->tail)
 		THE_BUFFER_IS_FULL = 1;
-	// printf("In ADD_JOB_TO_BUFFER. Adding job %d.\nhead was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
+	printf("In ADD_JOB_TO_BUFFER. Adding job %d.\nhead was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
 	
 }
 
@@ -299,7 +294,7 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 			tm->schedalg = "FIFO";
 	}
 	else{
-			tm->schedalg = "FIFO";
+		tm->schedalg = "FIFO";
 	}
 	
 	tm->head = tm->tail = 0;
@@ -311,10 +306,10 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	//... CALLOC_ACTUAL_BUFFER_SPACE_ON_HEAP
 	// *threads = (pthread_t*) calloc(num_threads, sizeof(pthread_t));
     for (i=0; i<num_threads; i++) {
-		// printf("Making thread %d\n",(int) i+1);
+	 printf("Making thread %d\n",(int) i+1);
 		if((status = pthread_create(&threads[i], NULL, *worker, (void *) (i + 1))) == 0){
 			pthread_detach(threads[i]); // make non-joinable
-			// printf("Thread %d successfully detached\n", (int) i+1);
+		 printf("Thread %d successfully detached\n", (int) i+1);
 		}
 		else
 			printf("Oops, pthread_create() returned error code %d when attempting to make thread %d\n",status, (int) i);
@@ -336,7 +331,7 @@ static void *tpool_worker(void *arg){
 		}
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
 		printf("This is Job... %d",job->job_id);
-		// printf("Hello from thread %d!\nDoing job %d now.",my_id, (int) job->job_id);
+		printf("Hello from thread %d!\nDoing job %d now.",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
 		DO_THE_WORK(job);  // call web() plus ??
 		pthread_mutex_lock(&(tm->work_mutex));
@@ -349,12 +344,14 @@ static void *tpool_worker(void *arg){
 
 char tpool_add_work(job_t job){
 	tpool_t *tm = &the_pool;
+	int fileType = getFileExtension(job.job_fd,job.job_id);
+	job.type = fileType;
 	pthread_mutex_lock(&(tm->work_mutex));
 	while (THE_BUFFER_IS_FULL)
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
 	ADD_JOB_TO_BUFFER(job);
 	// Wake the Keystone Cops!! (improve this eventually)
-	// printf("Broadcasting to consumer\n");
+	 printf("Broadcasting to consumer\n");
 	pthread_cond_broadcast(&(tm->c_cond));
 	pthread_mutex_unlock(&(tm->work_mutex));
 
@@ -530,7 +527,7 @@ int main(int argc, char **argv)
 	if( listen(listenfd,64) <0) {
 		logger(ERROR,"system call","listen",0);
 	}
-	// printf("port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
+	printf("port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
 	// Set up thread pool
 	char* schedalg = argv[4];
 	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker, schedalg);
@@ -543,7 +540,6 @@ int main(int argc, char **argv)
 		job.job_fd = socketfd;
 		job.job_id = hit;
 		tpool_add_work(job);
-		// tpool_worker();
 	}
 }
 /* Step one: Main makes a pool, a job and the worker.
