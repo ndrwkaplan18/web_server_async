@@ -214,7 +214,16 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 		SHOULD_WAKE_UP_THE_PRODUCER = 1;
 	}
 	if(picFiles==0){//there are no pics, so we just do a normal remove
-		job = REMOVE_FIFO_JOB_FROM_BUFFER();
+		//job = REMOVE_FIFO_JOB_FROM_BUFFER();
+		for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
+			
+			if(job.type == 1){ //ANY of the AVAILABLE Files.
+				
+				tm->jobBuffer[i].taken = 1;
+				job = tm->jobBuffer[i];//Return the pic
+				break;//keeps track if there is any-we know whether or not to just switch to FIFO
+			}
+	}
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
@@ -244,7 +253,16 @@ job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 		SHOULD_WAKE_UP_THE_PRODUCER = 1;
 	}
 	if(textFiles == 0){//there are no text files, so we just do a normal remove
-		job = REMOVE_FIFO_JOB_FROM_BUFFER();
+		//		job = REMOVE_FIFO_JOB_FROM_BUFFER();
+		for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
+			
+			if(job.type == 1){ //ANY of the AVAILABLE Files.
+				
+				tm->jobBuffer[i].taken = 1;
+				job = tm->jobBuffer[i];//Return the pic
+				break;//keeps track if there is any-we know whether or not to just switch to FIFO
+			}
+		}
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
@@ -346,6 +364,7 @@ char tpool_add_work(job_t job){
 	tpool_t *tm = &the_pool;
 	int fileType = getFileExtension(job.job_fd,job.job_id);
 	job.type = fileType;
+
 	pthread_mutex_lock(&(tm->work_mutex));
 	while (THE_BUFFER_IS_FULL)
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
@@ -482,7 +501,7 @@ int main(int argc, char **argv)
 	tpool_t *tm = &the_pool;
 	job_t job;
 
-	if( argc < 5  || argc > 5 || !strcmp(argv[1], "-?") ) {
+	if( argc < 6  || argc > 6 || !strcmp(argv[1], "-?") ) {
 		(void)printf("USAGE: %s <port-number> <top-directory>\t\tversion %d\n\n"
 	"\tnweb is a small and very safe mini web server\n"
 	"\tnweb only servers out file/web pages with extensions named below\n"
@@ -537,6 +556,7 @@ int main(int argc, char **argv)
 		if((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length)) < 0) {
 			logger(ERROR,"system call","accept",0);
 		}
+		job.taken = 0;
 		job.job_fd = socketfd;
 		job.job_id = hit;
 		tpool_add_work(job);
