@@ -47,6 +47,7 @@ typedef struct {
 	int job_fd; // the socket file descriptor
 	int taken;//tells the producer whether or not this job was taken or not. 
 	int type;// 1 for pic, 0 for Text.
+	char * first_part; // When we find out the type, we consume part of the file which is saved here
 	// what other stuff needs to be here eventually?
 } job_t;
 
@@ -85,80 +86,42 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER();
 job_t REMOVE_TXT_JOB_FROM_BUFFER();
 void ADD_JOB_TO_BUFFER(job_t job);
 void DO_THE_WORK(job_t *job);
-int getFileExtension(int fd, int id);
+void getFileExtension(job_t job);
 // The work
 void logger(int type, char *s1, char *s2, int socket_fd);
-void web(int fd, int hit);
+void web(int fd, int hit, char * first_part);
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
 /*HELPER FUNCTIONS */
-int getFileExtension(int fd, int id){//returns 1 for images and 0 for Text
-	int j, buflen;
-    long i, ret, len;
+void getFileExtension(job_t job){//returns 1 for images and 0 for Text
+	int i, j, k;
     char * ext;
     static char buffer[BUFSIZE+1]; /* static so zero filled */
+	i = 0, k = 0;
+	char c;
+	// Read until the 2nd space. Assuming request format is "GET <path> <headers>"
+	for(;i < 2;){
+		read(job.job_fd, buffer, 1);
+		if(buffer[++k] == ' ') i++;
+	}
+	// GET /index.html blah blah
+	// Seek backwards to the '.' denoting the file extension
+	while(buffer[k--] != '.');
+	i = 0;
+	// Fill in the extension with the characters up to and not including the final space
+	while((c = buffer[++k]) != ' ')
+		ext[++i] = c;
+	job.first_part = buffer;
 
-    ret =read(fd,buffer,BUFSIZE);   /* read Web request in one go *///maybe only x bytes?
-    if(ret == 0 || ret == -1) { /* read failure stop now */
-        goto endRequest;
-    }
-    if(ret > 0 && ret < BUFSIZE) {  /* return code is valid chars */ //x?
-        buffer[ret]= 0;      /* terminate the buffer */
-    }
-    else {
-        buffer[0]=0;
-    }
-    for(i=0;i<ret;i++) {    /* remove CF and LF characters */
-        if(buffer[i] == '\r' || buffer[i] == '\n') {
-            buffer[i]='*';
-        }
-    }
-    if( strncmp(buffer,"GET ",4) && strncmp(buffer,"get ",4)) { //!!וביה מניה סתירה !והא
-        goto endRequest;
-    }
-    for(i=4;i<BUFSIZE;i++) { /* null terminate after the second space to ignore extra stuff */
-        if(buffer[i] == ' ') { /* string is "GET URL " +lots of other stuff */
-            buffer[i] = 0;
-            break;
-        }
-    }
-	// Now i = BUFSIZE - 1
-	// URL: https://www.tutorialspoint.com/../../../c_standard_library/c_function_strncmp.htm
-    for(j=0;j<i-1;j++) {    /* check for illegal parent directory use .. */
-        if(buffer[j] == '.' && buffer[j+1] == '.') {
-            goto endRequest;
-        }
-    }
-    if( !strncmp(&buffer[0],"GET /\0",6) || !strncmp(&buffer[0],"get /\0",6) ) { /* convert no filename to index file */
-        (void)strcpy(buffer,"GET /index.html");
-    }
-
-    /* work out the file type and check we support it */
-    buflen=strlen(buffer);
-    ext = (char *)0;
-	int identifierDigit;
-    for(i=0;extensions[i].ext != 0;i++) {
-        len = strlen(extensions[i].ext);
-        if( !strncmp(&buffer[buflen-len], extensions[i].ext, len)) {
-            ext = extensions[i].ext;
-            break;
-        }
-    }
-	for (int j=0;j<=6; j++){
-		if(!strcmp(ext,extensions[i].ext)){
-			identifierDigit = 1;
-		}
-		else{
-			identifierDigit = 0;
+	for (j=0;j<=7; j++){//The first 8 files in the ext array are images.
+		if(!strcmp(ext,extensions[j].ext)){
+			job.type = 1;
+			return;
 		}
 	}
-	//char * file = 
-     // GET /zoobat.jpg
-    endRequest:
-    sleep(1);   /* allow socket to drain before signalling the socket is closed */
-    close(fd);
-return identifierDigit;
+	job.type =0;
 }
+
 job_t REMOVE_JOB_FROM_BUFFER(){
 	tpool_t *tm = &the_pool;
 	job_t job;
@@ -283,7 +246,7 @@ void ADD_JOB_TO_BUFFER(job_t job){
 
 void DO_THE_WORK(job_t *job){
 	printf("Doing JOB %d",job->job_id);
-	web(job->job_fd, job->job_id);
+	web(job->job_fd, job->job_id, job->first_part);
 }
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
@@ -363,8 +326,7 @@ static void *tpool_worker(void *arg){
 
 char tpool_add_work(job_t job){
 	tpool_t *tm = &the_pool;
-	int fileType = getFileExtension(job.job_fd,job.job_id);
-	job.type = fileType;
+	getFileExtension(job);
 
 	pthread_mutex_lock(&(tm->work_mutex));
 	while (THE_BUFFER_IS_FULL)
@@ -410,20 +372,22 @@ void logger(int type, char *s1, char *s2, int socket_fd)
 }
 
 /* this is a child web server process, so we can exit on errors */
-void web(int fd, int hit/*, int offset*/)
+void web(int fd, int hit, char * buffer)
 {
     int j, file_fd, buflen;
     long i, ret, len;
     char * fstr;
-    static char buffer[BUFSIZE+1]; /* static so zero filled */
-	 
-    ret =read(fd,buffer,BUFSIZE-20);   /* read Web request in one go */
+    static char buffer2[BUFSIZE+1]; /* static so zero filled */
+	
+    ret =read(fd,buffer2,BUFSIZE);   /* read Web request in one go */
+	strcat(*buffer, *buffer2);
+	// concat here first_part + buffer
     if(ret == 0 || ret == -1) { /* read failure stop now */
 		
 		logger(FORBIDDEN,"failed to read browser request","",fd);
         goto endRequest;
     }
-    if(ret > 0 && ret < BUFSIZE-20) {  /* return code is valid chars */
+    if(ret > 0 && ret < BUFSIZE) {  /* return code is valid chars */
         buffer[ret]=0;      /* terminate the buffer */
     }
     else {
