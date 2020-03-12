@@ -44,9 +44,9 @@ static char THERE_IS_NO_WORK_TO_BE_DONE, SHOULD_WAKE_UP_THE_PRODUCER, THE_BUFFER
 /* what a worker thread needs to start a job */
 typedef struct {
 	int job_id;
-	int job_fd; // the socket file descriptor// 1 for pic, 0 for Text.
+	int job_fd; // the socket file descriptor
 	int taken;//tells the producer whether or not this job was taken or not. 
-	int type;
+	int type;// 1 for pic, 0 for Text.
 	// what other stuff needs to be here eventually?
 } job_t;
 
@@ -59,6 +59,9 @@ typedef struct {
 	pthread_cond_t c_cond; // P/C condition variables
 	pthread_cond_t p_cond;
 	char* schedalg;
+	int textFiles;
+	int fileCounter;
+	int picFiles;
 	
 } tpool_t;
 
@@ -95,12 +98,12 @@ int getFileExtension(int fd, int id){//returns 1 for images and 0 for Text
     char * ext;
     static char buffer[BUFSIZE+1]; /* static so zero filled */
 
-    ret =read(fd,buffer,BUFSIZE);   /* read Web request in one go */
+    ret =read(fd,buffer,BUFSIZE);   /* read Web request in one go *///maybe only x bytes?
     if(ret == 0 || ret == -1) { /* read failure stop now */
         goto endRequest;
     }
-    if(ret > 0 && ret < BUFSIZE) {  /* return code is valid chars */
-        buffer[ret]=0;      /* terminate the buffer */
+    if(ret > 0 && ret < BUFSIZE) {  /* return code is valid chars */ //x?
+        buffer[ret]= 0;      /* terminate the buffer */
     }
     else {
         buffer[0]=0;
@@ -149,6 +152,7 @@ int getFileExtension(int fd, int id){//returns 1 for images and 0 for Text
 			identifierDigit = 0;
 		}
 	}
+	//char * file = 
      // GET /zoobat.jpg
     endRequest:
     sleep(1);   /* allow socket to drain before signalling the socket is closed */
@@ -191,78 +195,68 @@ job_t REMOVE_FIFO_JOB_FROM_BUFFER(){
 }
 job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 	job_t job;
-	int picFiles=0;//Keeps track if therea re any pics in the buffer
-	int fileCounter = 0;
+	int tempPicFiles=1;//Keeps track if therea re any pics in the buffer
 	tpool_t *tm = &the_pool;
-	for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
-			
-			if((job.type == 1)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE pics Files.
-				//STILL HAVE TO FIGURE OUT HOW TO SET THE TAGS!!!!
-				tm->jobBuffer[i].taken = 1;
-				job = tm->jobBuffer[i];//Return the pic
-				picFiles++;//keeps track if there is any-we know whether or not to just switch to FIFO
-			}
-	}
-	for(int i =0; i< tm->buf_capacity; i++){
-		if(tm->jobBuffer[i].taken == 0){//its an available text or pic doc
-				fileCounter++;//we know there are other files inside
-		}
-	}
+	int availableTxtfileIndex;
 	/*Checks if theres any work Left*/
-	if(fileCounter == 0){
+	if(tm->fileCounter == 0){
 		THERE_IS_NO_WORK_TO_BE_DONE = 1;
 		SHOULD_WAKE_UP_THE_PRODUCER = 1;
 	}
-	if(picFiles==0){//there are no pics, so we just do a normal remove
-		//job = REMOVE_FIFO_JOB_FROM_BUFFER();
-		for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
-			
-			if(job.type == 1){ //ANY of the AVAILABLE Files.
-				
+	if(tm->fileCounter != 0){ 
+		for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer	
+				if(tm->picFiles==0){//First check if there are Pics left-If not, we get the index of a textFile
+					if(tm->jobBuffer[i].taken == 0){//We get the index of an available Text File.
+						availableTxtfileIndex = i;
+						tempPicFiles =0;
+						break;
+					}	
+				}
+				if((job.type == 1)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE pics Files.
 				tm->jobBuffer[i].taken = 1;
+				tm->picFiles--;//decrement the picfiles amount
 				job = tm->jobBuffer[i];//Return the pic
-				break;//keeps track if there is any-we know whether or not to just switch to FIFO
+				}
 			}
 	}
+	if(tempPicFiles ==0){//there are no pics, so we just do a normal remove-
+			job = tm->jobBuffer[availableTxtfileIndex];//Return the text.
+			tm->textFiles--;//decrement the text Files.
+			tm->jobBuffer[availableTxtfileIndex].taken = 1;
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
 }
 job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 	job_t job;
-	int textFiles=0;//Keeps track if therea re any pics in the buffer
-	int fileCounter = 0;
+	int tempTxtFiles=1;//Keeps track if therea re any pics in the buffer
 	tpool_t *tm = &the_pool;
-	for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
-			
-			if((job.type == 0)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE text Files.
-				//STILL HAVE TO FIGURE OUT HOW TO SET THE TAGS!!!!
-				tm->jobBuffer[i].taken = 1;
-				job = tm->jobBuffer[i];//Return the text file
-				textFiles++;//keeps track of text files so we know whether or not to switvh to FIFO
-			}
-	}
-	for(int i =0; i< tm->buf_capacity; i++){
-		if(tm->jobBuffer[i].taken == 0){//its an available text or pic doc
-				fileCounter++;//we know there are other files inside
-		}
-	}
+	int availablePicfileIndex;
 	/*Checks if theres any work Left*/
-	if(fileCounter == 0){
+	if(tm->fileCounter == 0){
 		THERE_IS_NO_WORK_TO_BE_DONE = 1;
 		SHOULD_WAKE_UP_THE_PRODUCER = 1;
 	}
-	if(textFiles == 0){//there are no text files, so we just do a normal remove
-		//		job = REMOVE_FIFO_JOB_FROM_BUFFER();
-		for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer
-			
-			if(job.type == 1){ //ANY of the AVAILABLE Files.
-				
+	if(tm->fileCounter != 0){ 
+		for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer	
+				if(tm->textFiles==0){//First check if there are Texts left-If not, we get the index of a PicFile
+					if(tm->jobBuffer[i].taken == 0){//We get the index of an available Pic File.
+						availablePicfileIndex = i;
+						tempTxtFiles =0;
+						break;
+					}	
+				}
+				if((job.type == 0)&&(tm->jobBuffer[i].taken == 0)){ //Any of the AVAILABLE text Files.
 				tm->jobBuffer[i].taken = 1;
+				tm->textFiles--;//decrement the textfiles amount
 				job = tm->jobBuffer[i];//Return the pic
-				break;//keeps track if there is any-we know whether or not to just switch to FIFO
+				}
 			}
-		}
+	}
+	if(tempTxtFiles ==0){//there are no pics, so we just do a normal remove-
+			job = tm->jobBuffer[availablePicfileIndex];//Return the text.
+			tm->picFiles--;//decrement the text Files.
+			tm->jobBuffer[availablePicfileIndex].taken = 1;
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
@@ -274,6 +268,13 @@ void ADD_JOB_TO_BUFFER(job_t job){
 	tm->head = (tm->head + 1) % tm->buf_capacity;
 	THERE_IS_NO_WORK_TO_BE_DONE = 0;
 	SHOULD_WAKE_UP_THE_PRODUCER = 0;
+	tm->fileCounter++;
+	if(job.type == 1){
+		tm->picFiles++;
+	}
+	if(job.type == 0){
+		tm->textFiles++;
+	}
 	if((tm->head + 1 % tm->buf_capacity) == tm->tail)
 		THE_BUFFER_IS_FULL = 1;
 	printf("In ADD_JOB_TO_BUFFER. Adding job %d.\nhead was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
@@ -409,19 +410,20 @@ void logger(int type, char *s1, char *s2, int socket_fd)
 }
 
 /* this is a child web server process, so we can exit on errors */
-void web(int fd, int hit)
+void web(int fd, int hit/*, int offset*/)
 {
     int j, file_fd, buflen;
     long i, ret, len;
     char * fstr;
     static char buffer[BUFSIZE+1]; /* static so zero filled */
-
-    ret =read(fd,buffer,BUFSIZE);   /* read Web request in one go */
+	 
+    ret =read(fd,buffer,BUFSIZE-20);   /* read Web request in one go */
     if(ret == 0 || ret == -1) { /* read failure stop now */
-        logger(FORBIDDEN,"failed to read browser request","",fd);
+		
+		logger(FORBIDDEN,"failed to read browser request","",fd);
         goto endRequest;
     }
-    if(ret > 0 && ret < BUFSIZE) {  /* return code is valid chars */
+    if(ret > 0 && ret < BUFSIZE-20) {  /* return code is valid chars */
         buffer[ret]=0;      /* terminate the buffer */
     }
     else {
@@ -437,7 +439,7 @@ void web(int fd, int hit)
         logger(FORBIDDEN,"Only simple GET operation supported",buffer,fd);
         goto endRequest;
     }
-    for(i=4;i<BUFSIZE;i++) { /* null terminate after the second space to ignore extra stuff */
+    for(i=4;i<BUFSIZE-20;i++) { /* null terminate after the second space to ignore extra stuff */
         if(buffer[i] == ' ') { /* string is "GET URL " +lots of other stuff */
             buffer[i] = 0;
             break;
@@ -481,7 +483,7 @@ void web(int fd, int hit)
     dummy = write(fd,buffer,strlen(buffer));
 	
     /* send file in 8KB block - last block may be smaller */
-    while ( (ret = read(file_fd, buffer, BUFSIZE)) > 0 ) {
+    while ( (ret = read(file_fd, buffer, BUFSIZE-20)) > 0 ) {
         dummy = write(fd,buffer,ret);
     }
     endRequest:
