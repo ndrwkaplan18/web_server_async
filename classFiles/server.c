@@ -94,21 +94,30 @@ void web(int fd, int hit, char * first_part);
 /************************************************************************************************************************************/
 /*HELPER FUNCTIONS */
 void getFileExtension(job_t job){//returns 1 for images and 0 for Text
+	printf("\nIN the GETFILEEXTENSION METHOD BABY!!\n");
 	int i, j, k;
-    char * ext;
+	int p;
     static char buffer[BUFSIZE+1]; /* static so zero filled */
 	i = 0, k = 0;
 	char c;
 	// Read until the 2nd space. Assuming request format is "GET <path> <headers>"
 	for(;i < 2;){
-		read(job.job_fd, buffer, 1);
-		if(buffer[++k] == ' ') i++;
+		printf("\nIN the loop in get file ext. time # %d\n", i);
+		p = read(job.job_fd, buffer, 1);
+		if(p==0||p==-1){
+			printf("\nok. the p = 0\n");
+		}
+		printf("\nok. the buffer is %c\n",buffer[k]);
+		if(buffer[k] == ' ') i++;
+		k++;	
 	}
+	printf("%s",buffer);
 	// GET /index.html blah blah
 	// Seek backwards to the '.' denoting the file extension
 	while(buffer[k--] != '.');
 	i = 0;
 	// Fill in the extension with the characters up to and not including the final space
+	char ext[5];
 	while((c = buffer[++k]) != ' ')
 		ext[++i] = c;
 	job.first_part = buffer;
@@ -116,13 +125,16 @@ void getFileExtension(job_t job){//returns 1 for images and 0 for Text
 	for (j=0;j<=7; j++){//The first 8 files in the ext array are images.
 		if(!strcmp(ext,extensions[j].ext)){
 			job.type = 1;
+			printf("\nLeabing the Get File Ext Method\n");
 			return;
 		}
 	}
+	printf("\nLeabing the Get File Ext Method\n");
 	job.type =0;
 }
 
 job_t REMOVE_JOB_FROM_BUFFER(){
+	printf("\nin Remove JOb from BUffer\n");
 	tpool_t *tm = &the_pool;
 	job_t job;
 	
@@ -142,7 +154,7 @@ job_t REMOVE_JOB_FROM_BUFFER(){
 
 job_t REMOVE_FIFO_JOB_FROM_BUFFER(){
 	// Return job currently pointed to by tail ptr, then decrement tail ptr
-	
+	printf("\nin Remove FIFO JOb from BUffer\n");
 	tpool_t *tm = &the_pool;
 	job_t job;
 	job = tm->jobBuffer[tm->tail];
@@ -157,6 +169,7 @@ job_t REMOVE_FIFO_JOB_FROM_BUFFER(){
 	return job;
 }
 job_t REMOVE_PIC_JOB_FROM_BUFFER(){
+	printf("\nin Remove Pic JOb from BUffer\n");
 	job_t job;
 	int tempPicFiles=1;//Keeps track if therea re any pics in the buffer
 	tpool_t *tm = &the_pool;
@@ -191,6 +204,7 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 	return job;//whichever one it is
 }
 job_t REMOVE_TXT_JOB_FROM_BUFFER(){
+	printf("\nin Remove Text JOb from BUffer\n");
 	job_t job;
 	int tempTxtFiles=1;//Keeps track if therea re any pics in the buffer
 	tpool_t *tm = &the_pool;
@@ -225,10 +239,12 @@ job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 	return job;//whichever one it is
 }
 void ADD_JOB_TO_BUFFER(job_t job){
+	printf("\n adding a job to the buffer BUffer\n");
 	// add job to that index and increment the pointer.
 	tpool_t *tm = &the_pool;
 	tm->jobBuffer[tm->head] = job;
 	tm->head = (tm->head + 1) % tm->buf_capacity;
+	printf("Setting it to 0");
 	THERE_IS_NO_WORK_TO_BE_DONE = 0;
 	SHOULD_WAKE_UP_THE_PRODUCER = 0;
 	tm->fileCounter++;
@@ -253,7 +269,7 @@ void DO_THE_WORK(job_t *job){
 /*THREAD POOL FUNCTIONS */
 void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *worker, char* schedalg)
 {
-	
+	printf("\nCREATING POOL!!\n");
 	pthread_t* threads = (pthread_t*) malloc(sizeof(pthread_t));
 	size_t	i;
 	int status;
@@ -282,6 +298,7 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	tm->head = tm->tail = 0;
 	tm->buf_capacity = buf_size;
 	tm->jobBuffer = (job_t*) calloc(buf_size, sizeof(job_t));
+	printf("Setting it to 1\n");
 	THERE_IS_NO_WORK_TO_BE_DONE = 1;
 	THE_BUFFER_IS_FULL = 0;
 	SHOULD_WAKE_UP_THE_PRODUCER = 0;
@@ -305,16 +322,20 @@ static void *tpool_worker(void *arg){
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
 	printf("Hello from thread %d!\n",my_id);
 	while (1) {
+		printf("Entered the loop\n");
 		job_t *job = (job_t*) malloc(sizeof(job_t));//creates an array of Jobs
 		pthread_mutex_lock(&(tm->work_mutex));
 		while (THERE_IS_NO_WORK_TO_BE_DONE){
+			printf("AHHAA!\n");
 			// pthread_cond_signal(&tm->p_cond);
 			pthread_cond_wait(&(tm->c_cond), &(tm->work_mutex));
 		}
+		printf("OKKKKKKK\n");
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
 		printf("This is Job... %d",job->job_id);
-		printf("Hello from thread %d!\nDoing job %d now.",my_id, (int) job->job_id);
+		printf("Hello from thread %d!\nDoing job %d now.\n",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
+		
 		DO_THE_WORK(job);  // call web() plus ??
 		pthread_mutex_lock(&(tm->work_mutex));
 		if (SHOULD_WAKE_UP_THE_PRODUCER)
@@ -325,6 +346,7 @@ static void *tpool_worker(void *arg){
 }
 
 char tpool_add_work(job_t job){
+	printf("In the addwork Func\n");
 	tpool_t *tm = &the_pool;
 	getFileExtension(job);
 
@@ -380,7 +402,7 @@ void web(int fd, int hit, char * buffer)
     static char buffer2[BUFSIZE+1]; /* static so zero filled */
 	
     ret =read(fd,buffer2,BUFSIZE);   /* read Web request in one go */
-	strcat(*buffer, *buffer2);
+	strcat(buffer, buffer2);
 	// concat here first_part + buffer
     if(ret == 0 || ret == -1) { /* read failure stop now */
 		
@@ -518,6 +540,7 @@ int main(int argc, char **argv)
 	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker, schedalg);
 	
 	for(hit=1; ;hit++) {
+		printf("\n in the infinite loop\n \n");
 		length = sizeof(cli_addr);
 		if((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length)) < 0) {
 			logger(ERROR,"system call","accept",0);
@@ -525,6 +548,7 @@ int main(int argc, char **argv)
 		job.taken = 0;
 		job.job_fd = socketfd;
 		job.job_id = hit;
+		printf("Adding a Job!");
 		tpool_add_work(job);
 	}
 }
