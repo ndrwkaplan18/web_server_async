@@ -85,7 +85,6 @@ static void *client_worker(void *arg){
   int my_id = (intptr_t) arg; // Just casting to (int) triggers warning: "cast to pointer from integer of different size"
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
   host_t *host = &the_host;
-	fprintf(stdout, "\nHello from thread %d!\n",my_id);
   int clientfd, s, i = 0, first = 1;
   char buf[BUF_SIZE];
 
@@ -115,7 +114,7 @@ static void *client_worker(void *arg){
       GET(clientfd, host->filename1);
     else
       GET(clientfd, host->filename2);
-    // Wake up next thread
+    // Wake up next thread unless this is the last one
     if(host->isFIFO && my_id != host->num_threads) sem_post(&binary_sem[my_id + 1]);
 
     while (recv(clientfd, buf, BUF_SIZE, 0) > 0) {
