@@ -24,6 +24,7 @@ struct {
 	char *filetype;
 } extensions [] = {
 	{"gif", "image/gif" },
+	
 	{"jpg", "image/jpg" },
 	{"jpeg","image/jpeg"},
 	{"png", "image/png" },
@@ -39,7 +40,7 @@ static const char * HDRS_FORBIDDEN = "HTTP/1.1 403 Forbidden\nContent-Length: 18
 static const char * HDRS_NOTFOUND = "HTTP/1.1 404 Not Found\nContent-Length: 136\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\nThe requested URL was not found on this server.\n</body></html>\n";
 static const char * HDRS_OK = "HTTP/1.1 200 OK\nServer: nweb/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n";
 static int dummy; //keep compiler happy
-static char THERE_IS_NO_WORK_TO_BE_DONE, SHOULD_WAKE_UP_THE_PRODUCER, THE_BUFFER_IS_FULL; // TODO
+static char THERE_IS_NO_WORK_TO_BE_DONE, SHOULD_WAKE_UP_THE_PRODUCER, THE_BUFFER_IS_FULL;
 
 /* what a worker thread needs to start a job */
 typedef struct {
@@ -82,7 +83,7 @@ void web(int fd, int hit);
 /************************************************************************************************************************************/
 /*HELPER FUNCTIONS */
 job_t REMOVE_JOB_FROM_BUFFER(){
-	// Return job currently pointed to by tail ptr, then decrement tail ptr
+	// Return job currently pointed to by tail ptr, then increment tail ptr
 	tpool_t *tm = &the_pool;
 	job_t job = tm->jobBuffer[tm->tail];
 	tm->tail = (tm->tail + 1) % tm->buf_capacity;
