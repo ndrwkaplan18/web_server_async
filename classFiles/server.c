@@ -49,6 +49,7 @@ typedef struct {
 	int taken;//tells the producer whether or not this job was taken or not. 
 	int type;// 1 for pic, 0 for Text.
 	char * first_part; // When we find out the type, we consume part of the file which is saved here
+	int first_part_len;
 	// what other stuff needs to be here eventually?
 } job_t;
 
@@ -90,13 +91,12 @@ void DO_THE_WORK(job_t *job);
 void getFileExtension(job_t *job);
 // The work
 void logger(int type, char *s1, char *s2, int socket_fd);
-void web(int fd, int hit, char * first_part);
+void web(int fd, int hit, char * first_part, int first_part_len);
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
 /*HELPER FUNCTIONS */
 void getFileExtension(job_t *job){//returns 1 for images and 0 for Text
-	int i, j, k;
-	int p;
+	int i, j, k, p, len;
     static char buffer[BUFSIZE+1]; /* static so zero filled */
 	i = 0, k = 0;
 	char c;
@@ -109,6 +109,7 @@ void getFileExtension(job_t *job){//returns 1 for images and 0 for Text
 		else fprintf(stderr, "failed to read from fd. error code %d\n", p);
 		k++;	
 	}
+	len = k;
 	// fprintf(stdout,"%s",buffer);
 	// GET /index.html blah blah
 	// Seek backwards to the '.' denoting the file extension
@@ -119,6 +120,7 @@ void getFileExtension(job_t *job){//returns 1 for images and 0 for Text
 	while((c = buffer[++k]) != ' ')
 		ext[++i] = c;
 	job->first_part = buffer;
+	job->first_part_len = len;
 	fprintf(stdout,"\nJOB>FIRST PART: %s\n",job->first_part);
 	for (j=0;j<=7; j++){//The first 8 files in the ext array are images.
 		if(!strcmp(ext,extensions[j].ext)){
@@ -255,7 +257,7 @@ void ADD_JOB_TO_BUFFER(job_t job){
 
 void DO_THE_WORK(job_t *job){
 	fprintf(stdout,"\nDoing JOB %d\n",job->job_id);
-	web(job->job_fd, job->job_id, job->first_part);//
+	web(job->job_fd, job->job_id, job->first_part, job->first_part_len);//
 }
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
@@ -371,7 +373,7 @@ void logger(int type, char *s1, char *s2, int socket_fd)
 }
 
 /* this is a child web server process, so we can exit on errors */
-void web(int fd, int hit, char * first_part)
+void web(int fd, int hit, char * first_part, int first_part_len)
 {
 	int j, file_fd, buflen;
     long i, ret, len;
@@ -380,7 +382,8 @@ void web(int fd, int hit, char * first_part)
 	static char buffer[BUFSIZE+1];
 	
 	fprintf(stdout,"In web. first half of buffer: %s\n", first_part);
-	for (int i =0; i < BUFSIZE;i++){
+	
+	for (i = 0; i < BUFSIZE;i++){
 		if((buffer[i]== ' ')&&(buffer[i-1]== ' ')){
 			break;
 		}
@@ -388,9 +391,10 @@ void web(int fd, int hit, char * first_part)
 	}
 
     ret =read(fd,buffer2,BUFSIZE);   /* read Web request in one go */
+	ret += first_part_len; // add length of first part to latter part of request
 	strcat(buffer, buffer2);
-	fprintf(stdout,"In web. full request is:\n%s\n", buffer);
 	// concat here first_part + buffer
+	fprintf(stdout,"In web after strcat. full request is:\n%s\n", buffer);
     if(ret == 0 || ret == -1) { /* read failure stop now */
 		
 		logger(FORBIDDEN,"failed to read browser request","",fd);
@@ -402,13 +406,15 @@ void web(int fd, int hit, char * first_part)
     else {
         buffer[0]=0;
     }
+	fprintf(stdout,"In web before remove CF and LF chars. full request is:\n%s\n", buffer);
     for(i=0;i<ret;i++) {    /* remove CF and LF characters */
         if(buffer[i] == '\r' || buffer[i] == '\n') {
             buffer[i]='*';
         }
     }
     logger(LOG,"request",buffer,hit);
-    if( strncmp(buffer,"GET ",4) && strncmp(buffer,"get ",4)) { //!!וביה מניה סתירה !והא
+	fprintf(stdout,"In web after remove CF and LF chars. full request is:\n%s\n", buffer);
+    if( strncmp(buffer,"GET ",4) && strncmp(buffer,"get ",4)) {
         logger(FORBIDDEN,"Only simple GET operation supported",buffer,fd);
         goto endRequest;
     }
