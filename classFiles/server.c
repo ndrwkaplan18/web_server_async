@@ -24,6 +24,7 @@ struct {
 	char *filetype;
 } extensions [] = {
 	{"gif", "image/gif" },
+	
 	{"jpg", "image/jpg" },
 	{"jpeg","image/jpeg"},
 	{"png", "image/png" },
