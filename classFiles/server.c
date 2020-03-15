@@ -24,7 +24,7 @@ struct {
 	char *filetype;
 } extensions [] = {
 	{"gif", "image/gif" },
-	
+
 	{"jpg", "image/jpg" },
 	{"jpeg","image/jpeg"},
 	{"png", "image/png" },
@@ -87,14 +87,14 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER();
 job_t REMOVE_TXT_JOB_FROM_BUFFER();
 void ADD_JOB_TO_BUFFER(job_t job);
 void DO_THE_WORK(job_t *job);
-void getFileExtension(job_t job);
+void getFileExtension(job_t *job);
 // The work
 void logger(int type, char *s1, char *s2, int socket_fd);
 void web(int fd, int hit, char * first_part);
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
 /*HELPER FUNCTIONS */
-void getFileExtension(job_t job){//returns 1 for images and 0 for Text
+void getFileExtension(job_t *job){//returns 1 for images and 0 for Text
 	int i, j, k;
 	int p;
     static char buffer[BUFSIZE+1]; /* static so zero filled */
@@ -102,14 +102,14 @@ void getFileExtension(job_t job){//returns 1 for images and 0 for Text
 	char c;
 	// Read until the 2nd space. Assuming request format is "GET <path> <headers>"
 	for(;i < 2;){
-		p = read(job.job_fd, &buffer[k], 1);
-		if(p==0||p==-1){
-			printf("\nok. the p = 0\n");
+		//TODO check status of sys call
+		if((p = read(job->job_fd, &buffer[k], 1)) != 0){ // Read 1 byte from job_fd into buffer[k]
+			if(buffer[k] ==  ' ') i++;
 		}
-		if(buffer[k] ==  ' ') i++;
+		else fprintf(stderr, "failed to read from fd. error code %d\n", p);
 		k++;	
 	}
-	printf("%s",buffer);
+	// fprintf(stdout,"%s",buffer);
 	// GET /index.html blah blah
 	// Seek backwards to the '.' denoting the file extension
 	while(buffer[k--] != '.');
@@ -118,15 +118,15 @@ void getFileExtension(job_t job){//returns 1 for images and 0 for Text
 	char ext[20];
 	while((c = buffer[++k]) != ' ')
 		ext[++i] = c;
-	job.first_part = buffer;
-	printf("JOB>FIRST PART %s\n",job.first_part);
+	job->first_part = buffer;
+	fprintf(stdout,"\nJOB>FIRST PART: %s\n",job->first_part);
 	for (j=0;j<=7; j++){//The first 8 files in the ext array are images.
 		if(!strcmp(ext,extensions[j].ext)){
-			job.type = 1;
+			job->type = 1;
 			return;
 		}
 	}
-	job.type =0;
+	job->type =0;
 	return;
 }
 
@@ -154,7 +154,7 @@ job_t REMOVE_FIFO_JOB_FROM_BUFFER(){
 	job_t job;
 	job = tm->jobBuffer[tm->tail];
 	tm->tail = (tm->tail + 1) % tm->buf_capacity;
-	printf("In REMOVE_JOB_FROM_BUFFER. Taking job %d. tail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
+	fprintf(stdout, "In REMOVE_JOB_FROM_BUFFER. Taking job %d. tail was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
 	// Test here if the buffer is empty, if so set THERE_IS_NO_WORK_TO_BE_DONE and SHOULD_WAKE_UP_THE_PRODUCER to 1
 	if(tm->tail == tm->head){
 		THERE_IS_NO_WORK_TO_BE_DONE = 1;
@@ -164,7 +164,7 @@ job_t REMOVE_FIFO_JOB_FROM_BUFFER(){
 	return job;
 }
 job_t REMOVE_PIC_JOB_FROM_BUFFER(){
-	printf("\nin Remove Pic JOb from BUffer\n");
+	fprintf(stdout, "\nin Remove Pic Job from BUffer\n");
 	job_t job;
 	int tempPicFiles=1;//Keeps track if therea re any pics in the buffer
 	tpool_t *tm = &the_pool;
@@ -199,7 +199,7 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 	return job;//whichever one it is
 }
 job_t REMOVE_TXT_JOB_FROM_BUFFER(){
-	printf("\nin Remove Text JOb from BUffer\n");
+	fprintf(stdout, "\nin Remove Text JOb from BUffer\n");
 	job_t job;
 	int tempTxtFiles=1;//Keeps track if therea re any pics in the buffer
 	tpool_t *tm = &the_pool;
@@ -249,12 +249,12 @@ void ADD_JOB_TO_BUFFER(job_t job){
 	}
 	if((tm->head + 1 % tm->buf_capacity) == tm->tail)
 		THE_BUFFER_IS_FULL = 1;
-	printf("In ADD_JOB_TO_BUFFER. Adding job %d.\nhead was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
+	fprintf(stdout, "\nIn ADD_JOB_TO_BUFFER. Adding job %d.\nhead was %d now is %d\n", job.job_id, (int) tm->head - 1, (int)tm->head);
 	
 }
 
 void DO_THE_WORK(job_t *job){
-	printf("Doing JOB %d",job->job_id);
+	fprintf(stdout,"\nDoing JOB %d\n",job->job_id);
 	web(job->job_fd, job->job_id, job->first_part);//
 }
 /************************************************************************************************************************************/
@@ -274,14 +274,8 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	if (!strcmp(schedalg,"HPIC")){
 		tm->schedalg = "HPIC";
 	}
-	if(!strcmp(schedalg,"HPHC")){
-			tm->schedalg = "HPHC";
-	}
-	if(!strcmp(schedalg,"ANY")){
-			tm->schedalg = "FIFO";
-	}
-	if(!strcmp(schedalg,"FIFO")){
-			tm->schedalg = "FIFO";
+	else if(!strcmp(schedalg,"HPHC")){
+		tm->schedalg = "HPHC";
 	}
 	else{
 		tm->schedalg = "FIFO";
@@ -293,16 +287,13 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	THERE_IS_NO_WORK_TO_BE_DONE = 1;
 	THE_BUFFER_IS_FULL = 0;
 	SHOULD_WAKE_UP_THE_PRODUCER = 0;
-	//... CALLOC_ACTUAL_BUFFER_SPACE_ON_HEAP
-	// *threads = (pthread_t*) calloc(num_threads, sizeof(pthread_t));
+
     for (i=0; i<num_threads; i++) {
-	 printf("Making thread %d\n",(int) i+1);
 		if((status = pthread_create(&threads[i], NULL, *worker, (void *) (i + 1))) == 0){
 			pthread_detach(threads[i]); // make non-joinable
-		 printf("Thread %d successfully detached\n", (int) i+1);
 		}
 		else
-			printf("Oops, pthread_create() returned error code %d when attempting to make thread %d\n",status, (int) i);
+			fprintf(stderr, "Oops, pthread_create() returned error code %d when attempting to make thread %d\n",status, (int) i);
 	}
 }
 
@@ -311,7 +302,7 @@ static void *tpool_worker(void *arg){
 	tpool_t *tm = &the_pool;
 	int my_id = (intptr_t) arg; // Just casting to (int) triggers warning: "cast to pointer from integer of different size"
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
-	printf("Hello from thread %d!\n",my_id);
+	// printf("Hello from thread %d!\n",my_id);
 	while (1) {
 		job_t *job = (job_t*) malloc(sizeof(job_t));//creates an array of Jobs
 		pthread_mutex_lock(&(tm->work_mutex));
@@ -320,8 +311,7 @@ static void *tpool_worker(void *arg){
 			pthread_cond_wait(&(tm->c_cond), &(tm->work_mutex));
 		}
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
-		printf("This is Job... %d\n",job->job_id);
-		printf("Hello from thread %d! Doing job %d now.\n",my_id, (int) job->job_id);
+		fprintf(stdout, "Hello from thread %d! Doing job %d now.\n",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
 		
 		DO_THE_WORK(job);  // call web() plus ??
@@ -335,14 +325,14 @@ static void *tpool_worker(void *arg){
 
 char tpool_add_work(job_t job){
 	tpool_t *tm = &the_pool;
-	getFileExtension(job);
+	getFileExtension(&job);
 	pthread_mutex_lock(&(tm->work_mutex));
 	while (THE_BUFFER_IS_FULL)
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
 	ADD_JOB_TO_BUFFER(job);
 
 	// Wake the Keystone Cops!! (improve this eventually)
-	 printf("Broadcasting to consumer\n");
+	// fprintf(stdout, "Broadcasting to consumer\n");
 	pthread_cond_broadcast(&(tm->c_cond));
 	pthread_mutex_unlock(&(tm->work_mutex));
 
@@ -381,7 +371,7 @@ void logger(int type, char *s1, char *s2, int socket_fd)
 }
 
 /* this is a child web server process, so we can exit on errors */
-void web(int fd, int hit, char * buffer1)
+void web(int fd, int hit, char * first_part)
 {
 	int j, file_fd, buflen;
     long i, ret, len;
@@ -389,16 +379,17 @@ void web(int fd, int hit, char * buffer1)
     static char buffer2[BUFSIZE+1]; /* static so zero filled */
 	static char buffer[BUFSIZE+1];
 	
-	printf("first half of buffer: %s\n", buffer1);
+	fprintf(stdout,"In web. first half of buffer: %s\n", first_part);
 	for (int i =0; i < BUFSIZE;i++){
 		if((buffer[i]== ' ')&&(buffer[i-1]== ' ')){
 			break;
 		}
-		buffer[i] = buffer1[i];
+		buffer[i] = first_part[i];
 	}
-	printf("first half of buffer: %s\n", buffer);
+
     ret =read(fd,buffer2,BUFSIZE);   /* read Web request in one go */
 	strcat(buffer, buffer2);
+	fprintf(stdout,"In web. full request is:\n%s\n", buffer);
 	// concat here first_part + buffer
     if(ret == 0 || ret == -1) { /* read failure stop now */
 		
@@ -530,7 +521,7 @@ int main(int argc, char **argv)
 	if( listen(listenfd,64) <0) {
 		logger(ERROR,"system call","listen",0);
 	}
-	printf("port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
+	fprintf(stdout, "port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
 	// Set up thread pool
 	char* schedalg = argv[4];
 	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker, schedalg);
