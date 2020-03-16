@@ -50,6 +50,9 @@ typedef struct {
 	int type;// 1 for pic, 0 for Text.
 	char * first_part; // When we find out the type, we consume part of the file which is saved here
 	int first_part_len;
+	long arrival_time;//first seeen by master
+	long dispatch_time;//first picked up by a thread
+	long complete_time;
 	// what other stuff needs to be here eventually?
 } job_t;
 
@@ -65,9 +68,18 @@ typedef struct {
 	int textFiles;
 	int fileCounter;
 	int picFiles;
-	
+	int arrival_count;//amount thats arrived 
+	int dispatch_count;//amount left to dispatch.
+	int complete_count;//requests thats been logged
 } tpool_t;
 
+typedef struct {
+int job_count;
+int text_count;
+int pic_count;
+} thread_stat_struct;
+
+typedef thread_stat_struct thread_stat_structs[num_threads+1];
 
 // define type for worker thread C function
 typedef void * (worker_fn) (void *);
@@ -303,6 +315,7 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 static void *tpool_worker(void *arg){
 	tpool_t *tm = &the_pool;
 	int my_id = (intptr_t) arg; // Just casting to (int) triggers warning: "cast to pointer from integer of different size"
+		
 	// https://stackoverflow.com/questions/21323628/warning-cast-to-from-pointer-from-to-integer-of-different-size
 	// printf("Hello from thread %d!\n",my_id);
 	while (1) {
@@ -313,10 +326,19 @@ static void *tpool_worker(void *arg){
 			pthread_cond_wait(&(tm->c_cond), &(tm->work_mutex));
 		}
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
+		/*Set the stats*/
+		thread_stat_struct.my_id = my_id;
+		thread_stat_structs[my_id].job_count++;
+		if(job.type=1){
+			thread_stat_structs[my_id].pic_count++;
+		}else{
+			thread_stat_structs[my_id].text_count++;
+		} 
 		fprintf(stdout, "Hello from thread %d! Doing job %d now.\n",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
-		
+		job.dispatch_time= gettimeofday();
 		DO_THE_WORK(job);  // call web() plus ??
+		tm->dispatch_count++;
 		pthread_mutex_lock(&(tm->work_mutex));
 		if (SHOULD_WAKE_UP_THE_PRODUCER)
 			pthread_cond_signal(&(tm->p_cond));
@@ -327,7 +349,9 @@ static void *tpool_worker(void *arg){
 
 char tpool_add_work(job_t job){
 	tpool_t *tm = &the_pool;
+	job.arrival_time = gettimeofday();
 	getFileExtension(&job);
+	tm->arrival_count++;
 	pthread_mutex_lock(&(tm->work_mutex));
 	while (THE_BUFFER_IS_FULL)
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
@@ -389,14 +413,13 @@ void web(int fd, int hit, char * first_part, int first_part_len)
 		}
 		buffer[i] = first_part[i];
 	}
-
+	int newLength = length-1; //because the earlier counter counts the first space char before it exits the loop
     ret =read(fd,buffer2,BUFSIZE);   /* read Web request in one go */
-	ret += first_part_len; // add length of first part to latter part of request
+
 	strcat(buffer, buffer2);
 	// concat here first_part + buffer
 	fprintf(stdout,"In web after strcat. full request is:\n%s\n", buffer);
-    if(ret == 0 || ret == -1) { /* read failure stop now */
-		
+	if(ret == 0 || ret == -1) { /* read failure stop now */
 		logger(FORBIDDEN,"failed to read browser request","",fd);
         goto endRequest;
     }
@@ -406,6 +429,7 @@ void web(int fd, int hit, char * first_part, int first_part_len)
     else {
         buffer[0]=0;
     }
+  ret += first_part_len; // add length of first part to latter part of request
 	fprintf(stdout,"In web before remove CF and LF chars. full request is:\n%s\n", buffer);
     for(i=0;i<ret;i++) {    /* remove CF and LF characters */
         if(buffer[i] == '\r' || buffer[i] == '\n') {
@@ -460,7 +484,8 @@ void web(int fd, int hit, char * first_part, int first_part_len)
           (void)sprintf(buffer, HDRS_OK, VERSION, len, fstr);
     logger(LOG,"Header",buffer,hit);
     dummy = write(fd,buffer,strlen(buffer));
-	
+	tm->complete_count++;
+	job.complete_time = gettimeofday();	
     /* send file in 8KB block - last block may be smaller */
     while ( (ret = read(file_fd, buffer, BUFSIZE-20)) > 0 ) {
         dummy = write(fd,buffer,ret);
@@ -540,6 +565,9 @@ int main(int argc, char **argv)
 		job.taken = 0;
 		job.job_fd = socketfd;
 		job.job_id = hit;
+		tm->job_count = 0;
+		tm->text_count=0;
+		tm->pic_count=0; 
 		tpool_add_work(job);
 	}
 }
