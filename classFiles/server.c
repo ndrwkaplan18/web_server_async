@@ -200,6 +200,7 @@ job_t REMOVE_FIFO_JOB_FROM_BUFFER(){
 	return job;
 }
 job_t REMOVE_PIC_JOB_FROM_BUFFER(){
+	int i;
 	fprintf(stdout, "\nin Remove Pic Job from BUffer\n");
 	job_t job;
 	int tempPicFiles=1;//Keeps track if therea re any pics in the buffer
@@ -211,7 +212,7 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 		SHOULD_WAKE_UP_THE_PRODUCER = 1;
 	}
 	if(tm->fileCounter != 0){ 
-		for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer	
+		for(i =0; i< tm->buf_capacity; i++){//loop through the buffer	
 				if(tm->picFiles==0){//First check if there are Pics left-If not, we get the index of a textFile
 					if(tm->jobBuffer[i].taken == 0){//We get the index of an available Text File.
 						availableTxtfileIndex = i;
@@ -231,11 +232,10 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 			job = tm->jobBuffer[availableTxtfileIndex];//Return the text.
 			tm->textFiles--;//decrement the text Files.
 			tm->jobBuffer[availableTxtfileIndex].taken = 1;
-	}else{
-		for(int i =0; i< tm->buf_capacity; i++){
-			if (tm->jobBuffer[i].arrival_count< job.arrival_count){
-				tm->jobBuffer[i].req_age++;
-			}
+	}
+	for(i =0; i < tm->buf_capacity; i++){
+		if (!tm->jobBuffer[i].taken && tm->jobBuffer[i].arrival_count < job.arrival_count){
+			tm->jobBuffer[i].req_age++;
 		}
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
@@ -244,6 +244,7 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 	fprintf(stdout, "\nin Remove Text JOb from BUffer\n");
 	job_t job;
+	int i;
 	int tempTxtFiles=1;//Keeps track if therea re any pics in the buffer
 	tpool_t *tm = &the_pool;
 	int availablePicfileIndex;
@@ -253,7 +254,7 @@ job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 		SHOULD_WAKE_UP_THE_PRODUCER = 1;
 	}
 	if(tm->fileCounter != 0){ 
-		for(int i =0; i< tm->buf_capacity; i++){//loop through the buffer	
+		for(i =0; i< tm->buf_capacity; i++){//loop through the buffer	
 				if(tm->textFiles==0){//First check if there are Texts left-If not, we get the index of a PicFile
 					if(tm->jobBuffer[i].taken == 0){//We get the index of an available Pic File.
 						availablePicfileIndex = i;
@@ -272,11 +273,10 @@ job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 			job = tm->jobBuffer[availablePicfileIndex];//Return the text.
 			tm->picFiles--;//decrement the text Files.
 			tm->jobBuffer[availablePicfileIndex].taken = 1;
-	}else{
-		for(int i =0; i< tm->buf_capacity; i++){
-			if (tm->jobBuffer[i].arrival_count< job.arrival_count){
-				tm->jobBuffer[i].req_age++;
-			}
+	}
+	for(i =0; i < tm->buf_capacity; i++){
+		if (!tm->jobBuffer[i].taken && tm->jobBuffer[i].arrival_count < job.arrival_count){
+			tm->jobBuffer[i].req_age++;
 		}
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
