@@ -77,7 +77,6 @@ typedef struct {
 	pthread_cond_t p_cond;
 	char* schedalg;
 	int num_threads;
-	thread_stat_struct *thread_stat_structs;
 	int textFiles;
 	int fileCounter;
 	int picFiles;
@@ -287,7 +286,6 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	size_t	i;
 	int status;
 	tm->num_threads = num_threads;
-	tm-> thread_stat_structs = (thread_stat_struct*) malloc(sizeof(thread_stat_struct)*num_threads);
 	pthread_mutex_init(&(tm->work_mutex), NULL);
 	pthread_cond_init(&(tm->p_cond), NULL);
 	pthread_cond_init(&(tm->c_cond), NULL);
