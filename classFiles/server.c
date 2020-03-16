@@ -39,7 +39,18 @@ struct {
 
 static const char * HDRS_FORBIDDEN = "HTTP/1.1 403 Forbidden\nContent-Length: 185\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>403 Forbidden</title>\n</head><body>\n<h1>Forbidden</h1>\nThe requested URL, file type or operation is not allowed on this simple static file webserver.\n</body></html>\n";
 static const char * HDRS_NOTFOUND = "HTTP/1.1 404 Not Found\nContent-Length: 136\nConnection: close\nContent-Type: text/html\n\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\nThe requested URL was not found on this server.\n</body></html>\n";
-static const char * HDRS_OK = "HTTP/1.1 200 OK\nServer: nweb/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n\n";
+static const char * HDRS_OK = 	"HTTP/1.1 200 OK\nServer: nweb/%d.0\nContent-Length: %ld\nConnection: close\nContent-Type: %s\n"
+								"X-stat-req-arrival-count: %d\n"
+								"X-stat-req-arrival-time: %d\n"
+								"X-stat-req-dispatch-count: %d\n"
+								"X-stat-req-dispatch-time: %d\n"
+								"X-stat-req-complete-count: %d\n"
+								"X-stat-req-conplete-time: %d\n"
+								"X-stat-req-age: %d\n"
+								"X-stat-thread-id: %d\n"
+								"X-stat-thread-count: %d\n"
+								"X-stat-thread-html: %d\n"
+								"X-stat-thread-image: %d\n\n";
 static int dummy; //keep compiler happy
 static char THERE_IS_NO_WORK_TO_BE_DONE, SHOULD_WAKE_UP_THE_PRODUCER, THE_BUFFER_IS_FULL;  
 
@@ -53,6 +64,7 @@ typedef struct {
 	int first_part_len;
 	long arrival_time;//first seeen by master
 	int arrival_count; // number of requests arrived before this one
+	int dispatch_count;
 	long dispatch_time;//first picked up by a thread
 	long complete_time;
 	int complete_count;
@@ -61,6 +73,7 @@ typedef struct {
 } job_t;
 
 typedef struct {
+	int thread_id;
 	int job_count;
 	int text_count;
 	int pic_count;
@@ -104,11 +117,11 @@ job_t REMOVE_FIFO_JOB_FROM_BUFFER();
 job_t REMOVE_PIC_JOB_FROM_BUFFER();
 job_t REMOVE_TXT_JOB_FROM_BUFFER();
 void ADD_JOB_TO_BUFFER(job_t job);
-void DO_THE_WORK(job_t *job);
+void DO_THE_WORK(job_t *job, stats_t *thread_stats);
 void getFileExtension(job_t *job);
 // The work
 void logger(int type, char *s1, char *s2, int socket_fd);
-void web(job_t *job);
+void web(job_t *job, stats_t *thread_stats);
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
 /*HELPER FUNCTIONS */
@@ -272,9 +285,9 @@ void ADD_JOB_TO_BUFFER(job_t job){
 	
 }
 
-void DO_THE_WORK(job_t *job){
+void DO_THE_WORK(job_t *job, stats_t *thread_stats){
 	fprintf(stdout,"\nDoing JOB %d\n",job->job_id);
-	web(job);
+	web(job, thread_stats);
 }
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
@@ -306,6 +319,7 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 
 	tm->thread_stats = (stats_t*) calloc(num_threads+1, sizeof(stats_t));
 	for(i=0; i <= num_threads; i++){
+		tm->thread_stats[i].thread_id = i;
 		tm->thread_stats[i].job_count = 0;
 		tm->thread_stats[i].pic_count = 0;
 		tm->thread_stats[i].text_count = 0;
@@ -352,7 +366,7 @@ static void *tpool_worker(void *arg){
 
 		fprintf(stdout, "Hello from thread %d! Doing job %d now.\n",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
-		DO_THE_WORK(job);  // call web() plus ??
+		DO_THE_WORK(job, &tm->thread_stats[my_id]);  // call web() plus
 		pthread_mutex_lock(&(tm->work_mutex));
 		if (SHOULD_WAKE_UP_THE_PRODUCER)
 			pthread_cond_signal(&(tm->p_cond));
@@ -364,7 +378,6 @@ static void *tpool_worker(void *arg){
 char tpool_add_work(job_t job){
 	tpool_t *tm = &the_pool;
 	getFileExtension(&job);
-	tm->arrival_count++;
 	pthread_mutex_lock(&(tm->work_mutex));
 	while (THE_BUFFER_IS_FULL)
 		pthread_cond_wait(&(tm->p_cond), &(tm->work_mutex));
@@ -410,7 +423,7 @@ void logger(int type, char *s1, char *s2, int socket_fd)
 }
 
 /* this is a child web server process, so we can exit on errors */
-void web(job_t *job)
+void web(job_t *job, stats_t *thread_stats)
 {
 	tpool_t *tm = &the_pool;
 	int j, file_fd, buflen;
@@ -421,12 +434,14 @@ void web(job_t *job)
 	
 	fprintf(stdout,"In web. first half of buffer: %s\n", job->first_part);
 	
+	// TODO add comment explaining this
 	for (i = 0; i < BUFSIZE;i++){
 		if((buffer[i]== ' ')&&(buffer[i-1]== ' ')){
 			break;
 		}
 		buffer[i] = job->first_part[i];
 	}
+
     ret =read(job->job_fd,buffer2,BUFSIZE);   /* read Web request in one go */
 
 	strcat(buffer, buffer2);
@@ -502,7 +517,10 @@ void web(job_t *job)
     len = (long)lseek(file_fd, (off_t)0, SEEK_END); /* lseek to the file end to find the length */
           (void)lseek(file_fd, (off_t)0, SEEK_SET); /* lseek back to the file start ready for reading */
           /* print out the response line, stock headers, and a blank line at the end. */
-          (void)sprintf(buffer, HDRS_OK, VERSION, len, fstr);
+          (void)sprintf(buffer, HDRS_OK, VERSION, len, fstr, 
+		  				job->arrival_count, job->arrival_time, job->dispatch_count, job->dispatch_time,
+						job->complete_count, job->complete_time, job->req_age,
+						thread_stats->thread_id, thread_stats->job_count, thread_stats->text_count, thread_stats->pic_count);
     logger(LOG,"Header",buffer,job->job_id);
 
     dummy = write(job->job_fd,buffer,strlen(buffer));
@@ -590,6 +608,7 @@ int main(int argc, char **argv)
 		job.arrival_time = (now.tv_usec - start.tv_usec) / 1000;
 		pthread_mutex_unlock(&tm->work_mutex);
 		job.arrival_count = tm->arrival_count++;
+		job.dispatch_count = 0; //TODO
 		job.taken = 0;
 		job.job_fd = socketfd;
 		job.job_id = hit;
