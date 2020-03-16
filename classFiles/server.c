@@ -145,10 +145,13 @@ void getFileExtension(job_t *job){//returns 1 for images and 0 for Text
 	// Seek backwards to the '.' denoting the file extension
 	while(buffer[k--] != '.');
 	i = 0;
+	k += 1; // k is the index of the .
 	// Fill in the extension with the characters up to and not including the final space
 	char ext[20];
 	while((c = buffer[++k]) != ' ')
-		ext[++i] = c;
+		ext[i++] = c;
+	ext[i] = 0; // null terminate the string
+	fprintf(stdout,"ext is: %s\n", ext);
 	job->first_part = buffer;
 	job->first_part_len = len;
 	fprintf(stdout,"\nJOB>FIRST PART: %s\n",job->first_part);
