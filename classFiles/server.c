@@ -223,13 +223,20 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 				tm->jobBuffer[i].taken = 1;
 				tm->picFiles--;//decrement the picfiles amount
 				job = tm->jobBuffer[i];//Return the pic
+				break;
 				}
 			}
 	}
-	if(tempPicFiles ==0){//there are no pics, so we just do a normal remove-
+	if(tempPicFiles==0){//there are no pics, so we just do a normal remove-
 			job = tm->jobBuffer[availableTxtfileIndex];//Return the text.
 			tm->textFiles--;//decrement the text Files.
 			tm->jobBuffer[availableTxtfileIndex].taken = 1;
+	}else{
+		for(int i =0; i< tm->buf_capacity; i++){
+			if (tm->jobBuffer[i].arrival_count< job.arrival_count){
+				tm->jobBuffer[i].req_age++;
+			}
+		}
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
@@ -265,6 +272,12 @@ job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 			job = tm->jobBuffer[availablePicfileIndex];//Return the text.
 			tm->picFiles--;//decrement the text Files.
 			tm->jobBuffer[availablePicfileIndex].taken = 1;
+	}else{
+		for(int i =0; i< tm->buf_capacity; i++){
+			if (tm->jobBuffer[i].arrival_count< job.arrival_count){
+				tm->jobBuffer[i].req_age++;
+			}
+		}
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
