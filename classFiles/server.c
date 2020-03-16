@@ -89,6 +89,7 @@ typedef struct {
 	pthread_cond_t c_cond; // P/C condition variables
 	pthread_cond_t p_cond;
 	char* schedalg;
+	int num_threads;
 	int textFiles;
 	int fileCounter;
 	int picFiles;
@@ -222,13 +223,20 @@ job_t REMOVE_PIC_JOB_FROM_BUFFER(){
 				tm->jobBuffer[i].taken = 1;
 				tm->picFiles--;//decrement the picfiles amount
 				job = tm->jobBuffer[i];//Return the pic
+				break;
 				}
 			}
 	}
-	if(tempPicFiles ==0){//there are no pics, so we just do a normal remove-
+	if(tempPicFiles==0){//there are no pics, so we just do a normal remove-
 			job = tm->jobBuffer[availableTxtfileIndex];//Return the text.
 			tm->textFiles--;//decrement the text Files.
 			tm->jobBuffer[availableTxtfileIndex].taken = 1;
+	}else{
+		for(int i =0; i< tm->buf_capacity; i++){
+			if (tm->jobBuffer[i].arrival_count< job.arrival_count){
+				tm->jobBuffer[i].req_age++;
+			}
+		}
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
@@ -264,6 +272,12 @@ job_t REMOVE_TXT_JOB_FROM_BUFFER(){
 			job = tm->jobBuffer[availablePicfileIndex];//Return the text.
 			tm->picFiles--;//decrement the text Files.
 			tm->jobBuffer[availablePicfileIndex].taken = 1;
+	}else{
+		for(int i =0; i< tm->buf_capacity; i++){
+			if (tm->jobBuffer[i].arrival_count< job.arrival_count){
+				tm->jobBuffer[i].req_age++;
+			}
+		}
 	}
 	THE_BUFFER_IS_FULL = 0;//either way we know its not full.
 	return job;//whichever one it is
@@ -300,7 +314,7 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	pthread_t* threads = (pthread_t*) malloc(sizeof(pthread_t));
 	size_t	i;
 	int status;
-
+	tm->num_threads = num_threads;
 	pthread_mutex_init(&(tm->work_mutex), NULL);
 	pthread_cond_init(&(tm->p_cond), NULL);
 	pthread_cond_init(&(tm->c_cond), NULL);
@@ -315,7 +329,7 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	else{
 		tm->schedalg = "FIFO";
 	}
-	
+	tm-> arrival_count= tm->dispatch_count=tm->complete_count=0;
 	tm->head = tm->tail = 0;
 	tm->buf_capacity = buf_size;
 	tm->jobBuffer = (job_t*) calloc(buf_size, sizeof(job_t));
