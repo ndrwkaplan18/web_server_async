@@ -64,6 +64,8 @@ typedef struct {
 	pthread_cond_t c_cond; // P/C condition variables
 	pthread_cond_t p_cond;
 	char* schedalg;
+	int num_threads;
+	thread_stat_struct *thread_stat_structs;
 	int textFiles;
 	int fileCounter;
 	int picFiles;
@@ -72,13 +74,13 @@ typedef struct {
 	int complete_count;//requests thats been logged
 } tpool_t;
 
-typedef struct {
-int job_count;
-int text_count;
-int pic_count;
+struct {
+	int job_count;
+	int text_count;
+	int pic_count;
 } thread_stat_struct;
 
-typedef thread_stat_struct thread_stat_structs[num_threads+1];
+
 
 // define type for worker thread C function
 typedef void * (worker_fn) (void *);
@@ -268,6 +270,7 @@ void ADD_JOB_TO_BUFFER(job_t job){
 void DO_THE_WORK(job_t *job){
 	fprintf(stdout,"\nDoing JOB %d\n",job->job_id);
 	web(job->job_fd, job->job_id, job->first_part);//
+	job.complete_time = gettimeofday();
 }
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
@@ -277,7 +280,8 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	pthread_t* threads = (pthread_t*) malloc(sizeof(pthread_t));
 	size_t	i;
 	int status;
-
+	tm->num_threads = num_threads;
+	tm-> thread_stat_structs = (thread_stat_struct*) malloc(sizeof(thread_stat_struct)*num_threads);
 	pthread_mutex_init(&(tm->work_mutex), NULL);
 	pthread_cond_init(&(tm->p_cond), NULL);
 	pthread_cond_init(&(tm->c_cond), NULL);
@@ -292,7 +296,7 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	else{
 		tm->schedalg = "FIFO";
 	}
-	
+	tm-> arrival_count= tm->dispatch_count=tm->complete_count=0;
 	tm->head = tm->tail = 0;
 	tm->buf_capacity = buf_size;
 	tm->jobBuffer = (job_t*) calloc(buf_size, sizeof(job_t));
@@ -325,16 +329,16 @@ static void *tpool_worker(void *arg){
 		}
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
 		/*Set the stats*/
-		thread_stat_struct.my_id = my_id;
-		thread_stat_structs[my_id].job_count++;
-		if(job.type=1){
-			thread_stat_structs[my_id].pic_count++;
+		
+		tm->thread_stat_structs[my_id].job_count++;
+		if(job->type==1){
+			tm->thread_stat_structs[my_id].pic_count++;
 		}else{
-			thread_stat_structs[my_id].text_count++;
+			tm->thread_stat_structs[my_id].text_count++;
 		} 
 		fprintf(stdout, "Hello from thread %d! Doing job %d now.\n",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
-		job.dispatch_time= gettimeofday();
+		job->dispatch_time= gettimeofday();
 		DO_THE_WORK(job);  // call web() plus ??
 		tm->dispatch_count++;
 		pthread_mutex_lock(&(tm->work_mutex));
@@ -397,6 +401,7 @@ void logger(int type, char *s1, char *s2, int socket_fd)
 /* this is a child web server process, so we can exit on errors */
 void web(int fd, int hit, char * first_part)
 {
+	tpool_t *tm = &the_pool;
 	int j, file_fd, buflen;
     long i, ret, len;
     char * fstr;
@@ -482,7 +487,7 @@ void web(int fd, int hit, char * first_part)
     logger(LOG,"Header",buffer,hit);
     dummy = write(fd,buffer,strlen(buffer));
 	tm->complete_count++;
-	job.complete_time = gettimeofday();	
+		
     /* send file in 8KB block - last block may be smaller */
     while ( (ret = read(file_fd, buffer, BUFSIZE-20)) > 0 ) {
         dummy = write(fd,buffer,ret);
@@ -562,9 +567,6 @@ int main(int argc, char **argv)
 		job.taken = 0;
 		job.job_fd = socketfd;
 		job.job_id = hit;
-		tm->job_count = 0;
-		tm->text_count=0;
-		tm->pic_count=0; 
 		tpool_add_work(job);
 	}
 }
