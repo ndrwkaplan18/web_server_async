@@ -90,7 +90,7 @@ static void *client_worker(void *arg){
 
   while(1){
     // Check if this is the first iteration.
-    if(!first) sem_wait(&binary_sem[my_id]);
+    if(the_host.isFIFO && !first) sem_wait(&binary_sem[my_id]);
     else first = 0;
     // Establish connection with <hostname>:<port>
     clientfd = establishConnection(getHostInfo(host->hostname, host->portnum));
@@ -141,6 +141,7 @@ void host_init(host_t *host, int argc, char * hostname, char * portnum, size_t n
   host->portnum = portnum;
   host->num_threads = num_threads;
   host->isFIFO = !strncmp(schedalg,"FIFO",4);
+  // fprintf(stdout,"schedalg %s\n",schedalg);
   host->filename1 = filename1;
   if(argc == 7)
     host->filename2 = filename2;
