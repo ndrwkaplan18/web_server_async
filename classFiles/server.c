@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
@@ -51,13 +52,23 @@ typedef struct {
 	char * first_part; // When we find out the type, we consume part of the file which is saved here
 	int first_part_len;
 	long arrival_time;//first seeen by master
+	int arrival_count; // number of requests arrived before this one
 	long dispatch_time;//first picked up by a thread
 	long complete_time;
+	int complete_count;
+	int req_age;
 	// what other stuff needs to be here eventually?
 } job_t;
 
 typedef struct {
+	int job_count;
+	int text_count;
+	int pic_count;
+} stats_t;
+
+typedef struct {
 	job_t * jobBuffer; // array of server Jobs on heap
+	stats_t * thread_stats; // array of stats structs where each index corresponds to a respective thread's id
 	size_t buf_capacity;
 	size_t head; // position of writer
 	size_t tail; // position of reader
@@ -75,13 +86,7 @@ typedef struct {
 	int complete_count;//requests thats been logged
 } tpool_t;
 
-struct {
-	int job_count;
-	int text_count;
-	int pic_count;
-} thread_stat_struct;
-
-
+struct timeval start, now;
 
 // define type for worker thread C function
 typedef void * (worker_fn) (void *);
@@ -105,7 +110,7 @@ void DO_THE_WORK(job_t *job);
 void getFileExtension(job_t *job);
 // The work
 void logger(int type, char *s1, char *s2, int socket_fd);
-void web(int fd, int hit, char * first_part, int first_part_len);
+void web(job_t *job);
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
 /*HELPER FUNCTIONS */
@@ -271,8 +276,7 @@ void ADD_JOB_TO_BUFFER(job_t job){
 
 void DO_THE_WORK(job_t *job){
 	fprintf(stdout,"\nDoing JOB %d\n",job->job_id);
-	job.complete_time = gettimeofday();
-	web(job->job_fd, job->job_id, job->first_part, job->first_part_len);//
+	web(job);
 }
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
@@ -302,6 +306,14 @@ void tpool_init(tpool_t *tm, size_t num_threads, size_t buf_size, worker_fn *wor
 	tm->head = tm->tail = 0;
 	tm->buf_capacity = buf_size;
 	tm->jobBuffer = (job_t*) calloc(buf_size, sizeof(job_t));
+
+	tm->thread_stats = (stats_t*) calloc(num_threads+1, sizeof(stats_t));
+	for(i=0; i <= num_threads; i++){
+		tm->thread_stats[i].job_count = 0;
+		tm->thread_stats[i].pic_count = 0;
+		tm->thread_stats[i].text_count = 0;
+	}
+
 	THERE_IS_NO_WORK_TO_BE_DONE = 1;
 	THE_BUFFER_IS_FULL = 0;
 	SHOULD_WAKE_UP_THE_PRODUCER = 0;
@@ -331,18 +343,19 @@ static void *tpool_worker(void *arg){
 		}
 		*job = REMOVE_JOB_FROM_BUFFER(tm);
 		/*Set the stats*/
-		
-		tm->thread_stat_structs[my_id].job_count++;
-		if(job->type==1){
-			tm->thread_stat_structs[my_id].pic_count++;
+		if(gettimeofday(&now,NULL) != 0)
+			logger(ERROR,"gettimeofday","start",0);
+		job->dispatch_time = (now.tv_usec - start.tv_usec) / 1000;
+		tm->thread_stats[my_id].job_count++;
+		if(job->type == 1){
+			tm->thread_stats[my_id].pic_count++;
 		}else{
-			tm->thread_stat_structs[my_id].text_count++;
-		} 
+			tm->thread_stats[my_id].text_count++;
+		}
+
 		fprintf(stdout, "Hello from thread %d! Doing job %d now.\n",my_id, (int) job->job_id);
 		pthread_mutex_unlock(&(tm->work_mutex));
-		job->dispatch_time= gettimeofday();
 		DO_THE_WORK(job);  // call web() plus ??
-		tm->dispatch_count++;
 		pthread_mutex_lock(&(tm->work_mutex));
 		if (SHOULD_WAKE_UP_THE_PRODUCER)
 			pthread_cond_signal(&(tm->p_cond));
@@ -353,7 +366,6 @@ static void *tpool_worker(void *arg){
 
 char tpool_add_work(job_t job){
 	tpool_t *tm = &the_pool;
-	job.arrival_time = gettimeofday();
 	getFileExtension(&job);
 	tm->arrival_count++;
 	pthread_mutex_lock(&(tm->work_mutex));
@@ -401,7 +413,7 @@ void logger(int type, char *s1, char *s2, int socket_fd)
 }
 
 /* this is a child web server process, so we can exit on errors */
-void web(int fd, int hit, char * first_part, int first_part_len)
+void web(job_t *job)
 {
 	tpool_t *tm = &the_pool;
 	int j, file_fd, buflen;
@@ -410,41 +422,48 @@ void web(int fd, int hit, char * first_part, int first_part_len)
     static char buffer2[BUFSIZE+1]; /* static so zero filled */
 	static char buffer[BUFSIZE+1];
 	
-	fprintf(stdout,"In web. first half of buffer: %s\n", first_part);
+	fprintf(stdout,"In web. first half of buffer: %s\n", job->first_part);
 	
 	for (i = 0; i < BUFSIZE;i++){
 		if((buffer[i]== ' ')&&(buffer[i-1]== ' ')){
 			break;
 		}
-		buffer[i] = first_part[i];
+		buffer[i] = job->first_part[i];
 	}
-	int newLength = length-1; //because the earlier counter counts the first space char before it exits the loop
-    ret =read(fd,buffer2,BUFSIZE);   /* read Web request in one go */
+    ret =read(job->job_fd,buffer2,BUFSIZE);   /* read Web request in one go */
 
 	strcat(buffer, buffer2);
-	// concat here first_part + buffer
 	fprintf(stdout,"In web after strcat. full request is:\n%s\n", buffer);
+
+	pthread_mutex_lock(&tm->work_mutex);
+	if(gettimeofday(&now,NULL) != 0)
+		logger(ERROR,"gettimeofday","start",0);
+	job->complete_time = (now.tv_usec - start.tv_usec) / 1000;
+	pthread_mutex_unlock(&tm->work_mutex);
+	job->complete_count = tm->complete_count++;
+	// job->req_age = tm->dispatch_count TODO
+
 	if(ret == 0 || ret == -1) { /* read failure stop now */
-		logger(FORBIDDEN,"failed to read browser request","",fd);
+		logger(FORBIDDEN,"failed to read browser request","",job->job_fd);
         goto endRequest;
     }
+	ret += job->first_part_len; // add length of first part to latter part of request
     if(ret > 0 && ret < BUFSIZE) {  /* return code is valid chars */
         buffer[ret]=0;      /* terminate the buffer */
     }
     else {
         buffer[0]=0;
     }
-  ret += first_part_len; // add length of first part to latter part of request
 	fprintf(stdout,"In web before remove CF and LF chars. full request is:\n%s\n", buffer);
     for(i=0;i<ret;i++) {    /* remove CF and LF characters */
         if(buffer[i] == '\r' || buffer[i] == '\n') {
             buffer[i]='*';
         }
     }
-    logger(LOG,"request",buffer,hit);
+    logger(LOG,"request",buffer,job->job_id);
 	fprintf(stdout,"In web after remove CF and LF chars. full request is:\n%s\n", buffer);
     if( strncmp(buffer,"GET ",4) && strncmp(buffer,"get ",4)) {
-        logger(FORBIDDEN,"Only simple GET operation supported",buffer,fd);
+        logger(FORBIDDEN,"Only simple GET operation supported",buffer,job->job_fd);
         goto endRequest;
     }
     for(i=4;i<BUFSIZE-20;i++) { /* null terminate after the second space to ignore extra stuff */
@@ -457,7 +476,7 @@ void web(int fd, int hit, char * first_part, int first_part_len)
 	// URL: https://www.tutorialspoint.com/../../../c_standard_library/c_function_strncmp.htm
     for(j=0;j<i-1;j++) {    /* check for illegal parent directory use .. */
         if(buffer[j] == '.' && buffer[j+1] == '.') {
-            logger(FORBIDDEN,"Parent directory (..) path names not supported",buffer,fd);
+            logger(FORBIDDEN,"Parent directory (..) path names not supported",buffer,job->job_fd);
             goto endRequest;
         }
     }
@@ -476,34 +495,35 @@ void web(int fd, int hit, char * first_part, int first_part_len)
         }
     }
     if(fstr == 0){
-        logger(FORBIDDEN,"file extension type not supported",buffer,fd);
+        logger(FORBIDDEN,"file extension type not supported",buffer,job->job_fd);
     } // GET /zoobat.jpg
     if(( file_fd = open(&buffer[5],O_RDONLY)) == -1) {  /* open the file for reading */
-        logger(NOTFOUND, "failed to open file",&buffer[5],fd);
+        logger(NOTFOUND, "failed to open file",&buffer[5],job->job_fd);
         goto endRequest;
     }
-    logger(LOG,"SEND",&buffer[5],hit);
+    logger(LOG,"SEND",&buffer[5],job->job_id);
     len = (long)lseek(file_fd, (off_t)0, SEEK_END); /* lseek to the file end to find the length */
           (void)lseek(file_fd, (off_t)0, SEEK_SET); /* lseek back to the file start ready for reading */
           /* print out the response line, stock headers, and a blank line at the end. */
           (void)sprintf(buffer, HDRS_OK, VERSION, len, fstr);
-    logger(LOG,"Header",buffer,hit);
-    dummy = write(fd,buffer,strlen(buffer));
-	tm->complete_count++;
-		
+    logger(LOG,"Header",buffer,job->job_id);
+
+    dummy = write(job->job_fd,buffer,strlen(buffer));
     /* send file in 8KB block - last block may be smaller */
     while ( (ret = read(file_fd, buffer, BUFSIZE-20)) > 0 ) {
-        dummy = write(fd,buffer,ret);
+        dummy = write(job->job_fd,buffer,ret);
     }
     endRequest:
     sleep(1);   /* allow socket to drain before signalling the socket is closed */
-    close(fd);
+    close(job->job_fd);
 }
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
 /*MAIN */
 int main(int argc, char **argv)
 {
+	if(gettimeofday(&start, NULL) != 0)
+		logger(ERROR,"gettimeofday","start",0);
 	int i, port, listenfd, socketfd, hit;
 	socklen_t length;
 	static struct sockaddr_in cli_addr; /* static = initialised to zeros */
@@ -514,50 +534,50 @@ int main(int argc, char **argv)
 
 	if( argc < 6  || argc > 6 || !strcmp(argv[1], "-?") ) {
 		(void)printf("USAGE: %s <port-number> <top-directory>\t\tversion %d\n\n"
-	"\tnweb is a small and very safe mini web server\n"
-	"\tnweb only servers out file/web pages with extensions named below\n"
-	"\t and only from the named directory or its sub-directories.\n"
-	"\tThere is no fancy features = safe and secure.\n\n"
-	"\tExample: nweb 8181 /home/nwebdir &\n\n"
-	"\tOnly Supports:", argv[0], VERSION);
+		"\tnweb is a small and very safe mini web server\n"
+		"\tnweb only servers out file/web pages with extensions named below\n"
+		"\t and only from the named directory or its sub-directories.\n"
+		"\tThere is no fancy features = safe and secure.\n\n"
+		"\tExample: nweb 8181 /home/nwebdir &\n\n"
+		"\tOnly Supports:", argv[0], VERSION);
 		for(i=0;extensions[i].ext != 0;i++)
 			(void)printf(" %s",extensions[i].ext);
 
 		(void)printf("\n\tNot Supported: URLs including \"..\", Java, Javascript, CGI\n"
-	"\tNot Supported: directories / /etc /bin /lib /tmp /usr /dev /sbin \n"
-	"\tNo warranty given or implied\n\tNigel Griffiths nag@uk.ibm.com\n"  );
+		"\tNot Supported: directories / /etc /bin /lib /tmp /usr /dev /sbin \n"
+		"\tNo warranty given or implied\n\tNigel Griffiths nag@uk.ibm.com\n"  );
 		exit(0);
-	}
-	if( !strncmp(argv[2],"/"   ,2 ) || !strncmp(argv[2],"/etc", 5 ) ||
-	    !strncmp(argv[2],"/bin",5 ) || !strncmp(argv[2],"/lib", 5 ) ||
-	    !strncmp(argv[2],"/tmp",5 ) || !strncmp(argv[2],"/usr", 5 ) ||
-	    !strncmp(argv[2],"/dev",5 ) || !strncmp(argv[2],"/sbin",6) ){
-		(void)printf("ERROR: Bad top directory %s, see nweb -?\n",argv[2]);
-		exit(3);
-	}
-	if(chdir(argv[2]) == -1){
-		(void)printf("ERROR: Can't Change to directory %s\n",argv[2]);
-		exit(4);
-	}
-	logger(LOG,"nweb starting",argv[1],getpid());
-	/* setup the network socket */
-	if((listenfd = socket(AF_INET, SOCK_STREAM,0)) <0){
-		logger(ERROR, "system call","socket",0);
-	}
-	port = atoi(argv[1]);
-	if(port < 1025 || port >65000) {
-		logger(ERROR,"Invalid port number (try 1025->65000)",argv[1],0);
-	}
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	serv_addr.sin_port = htons(port);
-	if(bind(listenfd, (struct sockaddr *)&serv_addr,sizeof(serv_addr)) <0){
-		logger(ERROR,"system call","bind",0);
-	}
-	if( listen(listenfd,64) <0) {
-		logger(ERROR,"system call","listen",0);
-	}
-	fprintf(stdout, "port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
+		}
+		if( !strncmp(argv[2],"/"   ,2 ) || !strncmp(argv[2],"/etc", 5 ) ||
+			!strncmp(argv[2],"/bin",5 ) || !strncmp(argv[2],"/lib", 5 ) ||
+			!strncmp(argv[2],"/tmp",5 ) || !strncmp(argv[2],"/usr", 5 ) ||
+			!strncmp(argv[2],"/dev",5 ) || !strncmp(argv[2],"/sbin",6) ){
+			(void)printf("ERROR: Bad top directory %s, see nweb -?\n",argv[2]);
+			exit(3);
+		}
+		if(chdir(argv[2]) == -1){
+			(void)printf("ERROR: Can't Change to directory %s\n",argv[2]);
+			exit(4);
+		}
+		logger(LOG,"nweb starting",argv[1],getpid());
+		/* setup the network socket */
+		if((listenfd = socket(AF_INET, SOCK_STREAM,0)) <0){
+			logger(ERROR, "system call","socket",0);
+		}
+		port = atoi(argv[1]);
+		if(port < 1025 || port >65000) {
+			logger(ERROR,"Invalid port number (try 1025->65000)",argv[1],0);
+		}
+		serv_addr.sin_family = AF_INET;
+		serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+		serv_addr.sin_port = htons(port);
+		if(bind(listenfd, (struct sockaddr *)&serv_addr,sizeof(serv_addr)) <0){
+			logger(ERROR,"system call","bind",0);
+		}
+		if( listen(listenfd,64) <0) {
+			logger(ERROR,"system call","listen",0);
+		}
+		fprintf(stdout, "port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
 	// Set up thread pool
 	char* schedalg = argv[4];
 	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker, schedalg);
@@ -567,6 +587,12 @@ int main(int argc, char **argv)
 		if((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length)) < 0) {
 			logger(ERROR,"system call","accept",0);
 		}
+		pthread_mutex_lock(&tm->work_mutex);
+		if(gettimeofday(&now,NULL) != 0)
+			logger(ERROR,"gettimeofday","start",0);
+		job.arrival_time = (now.tv_usec - start.tv_usec) / 1000;
+		pthread_mutex_unlock(&tm->work_mutex);
+		job.arrival_count = tm->arrival_count++;
 		job.taken = 0;
 		job.job_fd = socketfd;
 		job.job_id = hit;
