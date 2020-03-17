@@ -611,7 +611,7 @@ int main(int argc, char **argv)
 		}
 		fprintf(stdout, "port: %d\nnumthreads: %d\nbufsize: %d\n",atoi(argv[1]),atoi(argv[3]),atoi(argv[4]));
 	// Set up thread pool
-	char* schedalg = argv[4];
+	char* schedalg = argv[5];
 	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker, schedalg);
 	
 	for(hit=1; ;hit++) {
