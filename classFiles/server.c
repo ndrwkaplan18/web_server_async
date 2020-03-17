@@ -123,6 +123,8 @@ void getFileExtension(job_t *job);
 // The work
 void logger(int type, char *s1, char *s2, int socket_fd);
 void web(job_t *job, stats_t *thread_stats);
+static void skeleton_daemon();
+void loop_function(int listenfd);
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
 /*HELPER FUNCTIONS */
@@ -551,20 +553,86 @@ void web(job_t *job, stats_t *thread_stats)
 }
 /************************************************************************************************************************************/
 /************************************************************************************************************************************/
+
 /*MAIN */
+void signal_handler(int sig){
+	switch(sig) {
+		case SIGHUP:
+			logger(ERROR,"hangup signal catched","SIGHUP",0);
+		break;
+		case SIGTERM:
+			logger(ERROR,"terminate signal catched","",0);
+			exit(0);
+		break;
+	}
+}
+static void skeleton_daemon()
+{
+    pid_t pid;
+
+    /* Fork off the parent process */
+    pid = fork();
+
+    /* An error occurred */
+    if (pid < 0)
+        exit(EXIT_FAILURE);
+
+    /* Success: Let the parent terminate */
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+
+    /* On success: The child process becomes session leader */
+    if (setsid() < 0)
+        exit(EXIT_FAILURE);
+
+    /* Catch, ignore and handle signals */
+    //TODO: Implement a working signal handler */
+    signal(SIGCHLD, signal_handler);
+    signal(SIGHUP, signal_handler);
+
+    /* Fork off for the second time*/
+    pid = fork();
+
+    /* An error occurred */
+    if (pid < 0)
+        exit(EXIT_FAILURE);
+
+    /* Success: Let the parent terminate */
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+
+    /* Set new file permissions */
+    sigmask(0);
+
+    /* Change the working directory to the root directory */
+    /* or another appropriated directory */
+    int i = chdir("/");
+	if(i == -1)
+	{
+    	exit(1);
+    /* return error of some sort, don't continue */
+	}
+
+    /* Close all open file descriptors */
+    int x;
+    for (x = sysconf(_SC_OPEN_MAX); x>=0; x--)
+    {
+        close (x);
+    }
+}
 int main(int argc, char **argv)
 {
+tpool_t *tm = &the_pool;	
 	if(gettimeofday(&start, NULL) != 0)
 		logger(ERROR,"gettimeofday","start",0);
-	int i, port, listenfd, socketfd, hit;
-	socklen_t length;
-	static struct sockaddr_in cli_addr; /* static = initialised to zeros */
-	static struct sockaddr_in serv_addr; /* static = initialised to zeros */
+	
+	int i, port, listenfd;
 	worker_fn *worker = tpool_worker;
-	tpool_t *tm = &the_pool;
-	job_t job;
+	static struct sockaddr_in serv_addr;
+	
+	
 
-	if( argc < 6  || argc > 6 || !strcmp(argv[1], "-?") ) {
+	if( argc < 6  || argc > 7 || !strcmp(argv[1], "-?") ) {
 		(void)printf("USAGE: %s <port-number> <top-directory>\t\tversion %d\n\n"
 		"\tnweb is a small and very safe mini web server\n"
 		"\tnweb only servers out file/web pages with extensions named below\n"
@@ -613,10 +681,30 @@ int main(int argc, char **argv)
 	// Set up thread pool
 	char* schedalg = argv[5];
 	tpool_init(tm, atoi(argv[3]), atoi(argv[4]), *worker, schedalg);
-	
-	for(hit=1; ;hit++) {
+	if (!strcmp(argv[7], "-d")){
+		skeleton_daemon();
+		while (1)
+    	{
+        //TODO: Insert daemon code here.
+		loop_function(listenfd);
+        sleep (20);
+        break;
+    	}
+    	return EXIT_SUCCESS;
+	}
+	loop_function(listenfd);	
+}
+void loop_function(int listenfd){
+static struct sockaddr_in cli_addr; /* static = initialised to zeros */
+ /* static = initialised to zeros */
+socklen_t length;
+int hit;
+int socketfd;
+job_t job;
+tpool_t *tm = &the_pool;
+for(hit=1; ;hit++) {
 		length = sizeof(cli_addr);
-		if((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length)) < 0) {
+		if((socketfd = accept(listenfd, (struct sockaddr*)&cli_addr, &length)) < 0) {
 			logger(ERROR,"system call","accept",0);
 		}
 		pthread_mutex_lock(&tm->work_mutex);
@@ -630,7 +718,7 @@ int main(int argc, char **argv)
 		job.job_fd = socketfd;
 		job.job_id = hit;
 		tpool_add_work(job);
-	}
+    }
 }
 /* Step one: Main makes a pool, a job and the worker.
 * 	Step two: Main adds Job to the Pool BUffer
